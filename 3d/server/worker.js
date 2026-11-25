@@ -106,6 +106,9 @@ export default {
         return r;
       }
       if (path === '/new' && request.method === 'POST') { let q = {}; try { q = await request.json(); } catch (e) {} const me = await whoIs(q && q.init, env); if (!me) return json({ ok: false, err: 'auth' }, 401); const id = newId(); return json({ ok: true, id, link: link(env, id) }); }
+      if (path === '/share' && request.method === 'POST') { let q = {}; try { q = await request.json(); } catch (e) {} const me = await whoIs(q && q.init, env), room = String((q && q.room) || ''); if (!me) return json({ ok: false, err: 'auth' }, 401); if (!/^[a-z0-9]{4,16}$/.test(room)) return json({ ok: false, err: 'room' }, 400);
+        const r = await tg(env, 'savePreparedInlineMessage', { user_id: Number(me.id), allow_user_chats: true, allow_group_chats: true, result: { type: 'article', id: 'r' + room, title: me.uz ? 'Pakostniki' : 'Пакостники', description: me.uz ? 'Xonaga taklif' : 'Приглашение в комнату', input_message_content: { message_text: me.uz ? '🏠 ' + me.name + ' qo‘shniga hazil qilishga chaqiryapti! Xonaga kiring 👇' : '🏠 ' + me.name + ' зовёт пакостить соседу! Заходи в комнату 👇' }, reply_markup: { inline_keyboard: [[{ text: me.uz ? '🚪 Xonaga kirish' : '🚪 Войти в комнату', url: link(env, room) }]] } } });
+        return r && r.ok ? json({ ok: true, id: r.result.id }) : json({ ok: false, err: (r && r.description) || 'tg' }, 502); }
       if (path === '/tg' && request.method === 'POST') return await telegram(env, request);
       if (path === '/setup') { if (!env.HOOK_SECRET || url.searchParams.get('key') !== env.HOOK_SECRET) return json({ ok: false, err: 'key' }, 403); return json(Object.assign({ ok: true }, await setup(env, url.origin))); }
       if (path === '/') return json({ ok: true, name: 'Pranksters', rooms: !!env.ROOMS, token: !!env.BOT_TOKEN, key: !!env.HOOK_SECRET });

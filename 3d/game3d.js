@@ -350,7 +350,11 @@ function netMsg(N, m) {
 }
 function netLeave() { if (!NET) return; const N = NET; NET = null; clearInterval(N.ping); try { N.ws && N.ws.close(); } catch (e) {} ME = 'me'; DISP.clear(); }
 async function netNew() { if (!initStr()) { toast('Игра с друзьями — в Telegram: @' + BOT, 3000); return; } try { const r = await (await fetch((zt().api || API) + '/new', { method: 'POST', body: JSON.stringify({ init: initStr() }) })).json(); if (r.ok) netJoin(r.id); else toast('Не получилось создать комнату', 2500); } catch (e) { toast('Нет связи с сервером', 2500); } }
-function netInvite() { if (!NET) return; const url = 'https://t.me/share/url?url=' + encodeURIComponent(NET.link) + '&text=' + encodeURIComponent('Пошли пакостить соседу! Заходи в мою комнату 🏠'); if (TG && TG.openTelegramLink) TG.openTelegramLink(url); else { try { navigator.clipboard.writeText(NET.link); toast('Ссылка скопирована'); } catch (e) { toast(NET.link, 4000); } } }
+function netInvite() { if (!NET) return; const N = NET;
+  const old = () => { const url = 'https://t.me/share/url?url=' + encodeURIComponent(N.link) + '&text=' + encodeURIComponent('Пошли пакостить соседу! Заходи в мою комнату 🏠'); if (TG && TG.openTelegramLink) TG.openTelegramLink(url); else { try { navigator.clipboard.writeText(N.link); toast('Ссылка скопирована'); } catch (e) { toast(N.link, 4000); } } };
+  // a real message with a «Войти» button, sent by the player through Telegram's own chat picker; the bare link is the fallback
+  if (!TG || !TG.shareMessage || !initStr()) return old();
+  fetch((zt().api || API) + '/share', { method: 'POST', body: JSON.stringify({ init: initStr(), room: N.room }) }).then((r) => r.json()).then((r) => { if (r && r.ok) { try { TG.shareMessage(r.id); } catch (e) { old(); } } else old(); }).catch(old); }
 // what the server says comes twenty times a second; in between, bodies glide to where they were last said to be
 const DISP = new Map();
 function smooth(v, dt) {
