@@ -9,6 +9,9 @@ for (const a of anims) { const o = await L.loadAsync('./fbx/anims/' + a + '.fbx'
   for (const t of c.tracks) if (/Hips\.position$/.test(t.name)) { const v = t.values, x0 = v[0], z0 = v[2]; for (let i = 0; i < v.length; i += 3) { v[i] = x0; v[i + 2] = z0; } } out['clip_' + a] = c.duration.toFixed(2) + 's ' + c.tracks.length + 'tr'; }
 for (const n of ['boss', 'aj']) { const o = await L.loadAsync('./fbx/' + n + '.fbx'); await new Promise((f) => setTimeout(f, 2500));
   o.traverse((m) => { if (m.isMesh) [].concat(m.material).forEach((x) => { for (const k of ['map', 'normalMap', 'specularMap', 'alphaMap', 'emissiveMap', 'bumpMap']) if (x[k] && !(x[k].image && (x[k].image.naturalWidth || x[k].image.width))) { x[k] = null; x.needsUpdate = true; } }); });
-  const glb = await new GLTFExporter().parseAsync(o, { binary: true, animations: clips, onlyVisible: true }); window['glb_' + n] = new Uint8Array(glb); out[n] = glb.byteLength; }
+  // a motion named boss_… or aj_… belongs to that body only; the rest go to both. A body's own one wins over a shared one of the same name
+  const mine = new Map(); for (const c of clips) { const m = /^(boss|aj)_(.+)$/.exec(c.name); if (m && m[1] !== n) continue; const name = m ? m[2] : c.name; if (mine.has(name) && !m) continue; const cc = c.clone(); cc.name = name; mine.set(name, cc); }
+  out[n + '_clips'] = [...mine.keys()].join(',');
+  const glb = await new GLTFExporter().parseAsync(o, { binary: true, animations: [...mine.values()], onlyVisible: true }); window['glb_' + n] = new Uint8Array(glb); out[n] = glb.byteLength; }
 document.title = 'ok';
 </script></body></html>

@@ -85,6 +85,7 @@ function part(x, y, z, vx, vy, vz, life, col, size, g) { if (PART.length >= NP) 
 
 // ---- the people -------------------------------------------------------------
 const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
+const ONCE = { fall: 1 };                 // motions that happen once and stay where they end
 const BODY = {}, PEOPLE = new Map();       // the two bodies as loaded; id -> { o, mixer, act, cur, z, rot }
 // what to play when a motion has not been brought in yet: the nearest one there is
 const FALLBACK = { walk: ['sneak', 'idle'], run: ['walk', 'idle'], sneak: ['walk', 'idle'], pick: ['idle'], sit: ['idle'], sleep: ['idle'], angry: ['look', 'idle'], look: ['idle'], fall: ['scared', 'idle'], scared: ['angry', 'idle'], cook: ['idle'], type: ['sit', 'idle'], eat: ['sit', 'idle'], dance: ['idle'], sad: ['idle'] };
@@ -95,7 +96,7 @@ function person(kind) {
   const P = { o, mixer, act, cur: '', z: ZP, rot: 0, kind, bones: { hips: o.getObjectByName('mixamorigHips'), lu: o.getObjectByName('mixamorigLeftUpLeg'), ru: o.getObjectByName('mixamorigRightUpLeg'), ll: o.getObjectByName('mixamorigLeftLeg'), rl: o.getObjectByName('mixamorigRightLeg'), hand: o.getObjectByName('mixamorigRightHand') } };
   play(P, 'idle'); return P;
 }
-function play(P, name, fade) { if (!P.act[name]) { for (const f of FALLBACK[name] || []) if (P.act[f]) { name = f; break; } } if (P.cur === name || !P.act[name]) return; const a = P.act[name], b = P.act[P.cur]; a.reset().setEffectiveWeight(1).play(); if (b) b.crossFadeTo(a, fade || 0.25, false); P.cur = name; }
+function play(P, name, fade) { if (!P.act[name]) { for (const f of FALLBACK[name] || []) if (P.act[f]) { name = f; break; } } if (P.cur === name || !P.act[name]) return; const a = P.act[name], b = P.act[P.cur]; if (ONCE[name]) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; } a.reset().setEffectiveWeight(1).play(); if (b) b.crossFadeTo(a, fade || 0.25, false); P.cur = name; }
 // a sitting pose laid over whatever is playing: thighs forward, shins down, hips lower
 function sit(P) { if (P.act.sit) return; const b = P.bones; if (!b.lu) return; b.lu.rotation.x -= 1.45; b.ru.rotation.x -= 1.45; b.ll.rotation.x += 1.5; b.rl.rotation.x += 1.5; }
 
@@ -166,6 +167,8 @@ const FLOATS = [];
 
 // ---- one frame --------------------------------------------------------------
 const worldZ = (P, y, mode) => { const dy = Math.min(Math.abs(y - F[0]), Math.abs(y - F[1])); return lerp(ZP, ZS, clamp(dy/0.35, 0, 1)); };
+const SIT_UP = 0.4;
+const SLEEP = { x: 790, y: 0.56, z: -2.15, ry: -Math.PI/2 };
 const ACTZ = { cook: [-2.05, -0.5], eat: [-2.05, 0], tv: [-2.38, 0.9], garden: [-1.35, 0.3], shower: [-2.45, 1.2], teeth: [-2.1, -0.4], sleep: [-2.15, 0], desk: [-1.95, -0.2] };
 function frameDraw(S, dt, now) {
   for (const k in TAG) TAG[k]._seen = false;
@@ -181,7 +184,9 @@ function frameDraw(S, dt, now) {
     const sitting = mode === 'act' && ['eat', 'tv', 'desk'].includes(act.id) || (mode === 'react' && ['glue', 'pins'].includes(fx) && N[14] < 0.3);
     const busy = { cook: 'cook', eat: 'eat', tv: 'sit', desk: 'type', sleep: 'sleep', garden: 'idle', shower: 'idle', teeth: 'idle' };
     play(P, mode === 'chase' ? 'run' : mode === 'walk' ? 'walk' : mode === 'search' ? 'look' : mode === 'react' ? (lie ? 'fall' : 'scared') : mode === 'gloat' ? 'angry' : mode === 'alert' ? 'angry' : mode === 'act' ? busy[act.id] : 'idle');
-    P.mixer.timeScale = 1; P.mixer.update(dt); if (sitting) { sit(P); if (!P.act.sit) P.o.position.y = y - 0.42; }
+    P.mixer.timeScale = 1; P.mixer.update(dt); if (sitting) { sit(P); P.o.position.y = P.act.sit ? y + SIT_UP : y - 0.42; }
+    // with a real sleeping motion he lies on the bed by himself: put him there, head to the pillow
+    if (mode === 'act' && act.id === 'sleep' && P.act.sleep) { P.o.position.set(X(SLEEP.x), F[1] + SLEEP.y, SLEEP.z); P.o.rotation.set(0, SLEEP.ry, 0); }
     if (lie && !(P.act.sleep && mode === 'act') && !(P.act.fall && mode === 'react')) { P.o.rotation.set(0, 0, act.id === 'sleep' && mode === 'act' ? Math.PI/2 : -Math.PI/2); P.o.position.set(act.id === 'sleep' && mode === 'act' ? X(800) : x, y + (act.id === 'sleep' && mode === 'act' ? 0.72 : 0.22), act.id === 'sleep' && mode === 'act' ? -2.15 : P.z); }
     if (mode === 'react' && ['alarm', 'pins', 'pepper'].includes(fx)) P.o.position.y += Math.abs(Math.sin(N[14]*9))*0.35;
     // skin goes blue for good after the dye
@@ -212,7 +217,8 @@ function frameDraw(S, dt, now) {
     const az = ak === 'item' || ak === 'prank' ? -2.0 : worldZ(Q, y); Q.z = lerp(Q.z, az, Math.min(1, dt*5)); const ry = ak ? Math.PI*0.9*(f > 0 ? 1 : -1) : f > 0 ? Math.PI/2 - 0.3 : -Math.PI/2 + 0.3; Q.rot = lerp(Q.rot, ry, Math.min(1, dt*10)); Q.o.rotation.set(0, Q.rot, 0); Q.o.position.set(x, y, Q.z);
     // after a prank of ours goes off, a little dance where he can't see
     const party = S.t - (LASTPRANK || -99) < 3 && !moving && !ak;
-    play(Q, out > 0 ? 'sad' : ak === 'prank' ? 'pick' : ak === 'item' ? 'pick' : moving ? (Math.abs(l.y - y) > 0.0005 ? 'walk' : 'sneak') : party ? 'dance' : 'idle', 0.2); Q.mixer.update(dt);
+    const chased = (N[4] === 'chase' || N[4] === 'alert') && N[16] === id;
+    play(Q, out > 0 ? 'sad' : ak === 'prank' ? 'pick' : ak === 'item' ? 'pick' : moving ? (chased ? 'run' : Math.abs(l.y - y) > 0.0005 ? 'walk' : 'sneak') : party ? 'dance' : 'idle', 0.2); Q.mixer.update(dt);
     if (item) { const it = Q.carry && Q.carry.k === item ? Q.carry : (() => { if (Q.carry) Q.carry.o.removeFromParent(); const o = itemMesh(item); o.scale.setScalar(1.6); scene.add(o); return Q.carry = { k: item, o }; })(); Q.bones.hand.getWorldPosition(it.o.position); it.o.position.y += 0.03; it.o.rotation.y = now; }
     else if (Q.carry) { Q.carry.o.removeFromParent(); Q.carry = null; }
     if (ak) { const u = clamp(at/G.ACT_T[ak], 0, 1); tag('act' + id, 'ring', '', x, y + 2.0, Q.z); TAG['act' + id].style.background = 'conic-gradient(#ffcf3a ' + (u*360) + 'deg, rgba(0,0,0,.4) 0)'; }
@@ -271,4 +277,4 @@ function loop(ts) {
   const [b, a] = await Promise.all([loader.loadAsync('./models/boss.json', prog(0)), loader.loadAsync('./models/aj.json', prog(1))]); BODY.boss = b; BODY.aj = a;
   setLoad(1); placeCamera(0, 0); $('load').style.display = 'none'; requestAnimationFrame(loop);
 })().catch((e) => { $('load').innerHTML = '<div>Не удалось загрузить: ' + e.message + '</div>'; });
-window.__G = G; window.__S = () => GAME; window.__start = startSolo; window.__view = () => VIEW; window.__R = R; window.__scene = scene; window.__cam = camera;
+window.__G = G; window.__SLEEP = SLEEP; window.__S = () => GAME; window.__start = startSolo; window.__view = () => VIEW; window.__R = R; window.__scene = scene; window.__cam = camera;
