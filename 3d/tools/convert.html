@@ -1,0 +1,12 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><script type="importmap">{ "imports": { "three": "./lib/three.module.js", "three/addons/": "./lib/addons/" } }</script></head><body>
+<script type="module">
+// each body with the animations attached, written out as one GLB: the same loader reads body and motion, so the bones match
+import * as THREE from 'three'; import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'; import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+const out = {}; window.__out = out; window.onerror = (m) => { out.err = m; document.title = 'ok'; }; addEventListener('unhandledrejection', (e) => { out.err = String(e.reason && e.reason.stack || e.reason); document.title = 'ok'; });
+const anims = JSON.parse(decodeURIComponent(location.hash.slice(1) || '[]')), L = new FBXLoader(), clips = [];
+for (const a of anims) { const o = await L.loadAsync('./fbx/anims/' + a + '.fbx'); const c = o.animations[0]; c.name = a; clips.push(c); out['clip_' + a] = c.duration.toFixed(2) + 's ' + c.tracks.length + 'tr'; }
+for (const n of ['boss', 'aj']) { const o = await L.loadAsync('./fbx/' + n + '.fbx'); await new Promise((f) => setTimeout(f, 2500));
+  o.traverse((m) => { if (m.isMesh) [].concat(m.material).forEach((x) => { for (const k of ['map', 'normalMap', 'specularMap', 'alphaMap', 'emissiveMap', 'bumpMap']) if (x[k] && !(x[k].image && (x[k].image.naturalWidth || x[k].image.width))) { x[k] = null; x.needsUpdate = true; } }); });
+  const glb = await new GLTFExporter().parseAsync(o, { binary: true, animations: clips, onlyVisible: true }); window['glb_' + n] = new Uint8Array(glb); out[n] = glb.byteLength; }
+document.title = 'ok';
+</script></body></html>

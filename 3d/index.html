@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Пакостники</title>
+<script type="importmap">{ "imports": { "three": "./lib/three.module.js", "three/addons/": "./lib/addons/" } }</script>
+<style>
+  :root { --ink: #1d1420; --acc: #ffcf3a; --mute: #b9a9c4; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1d1420; color: #fff; font-family: -apple-system, Roboto, "Segoe UI", sans-serif; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; touch-action: none; }
+  #app { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; overflow: hidden; }
+  body.rot #app { width: 100vh; height: 100vw; transform-origin: 0 0; transform: rotate(90deg) translateY(-100%); }
+  canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+  #tags { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .bub { position: absolute; transform: translate(-50%, -100%); background: #fff; color: #1d1420; font-weight: 800; font-size: 14px; padding: 6px 11px; border-radius: 12px; white-space: nowrap; box-shadow: 0 3px 10px rgba(0,0,0,.35); }
+  .bub::after { content: ''; position: absolute; left: 50%; bottom: -7px; margin-left: -7px; border: 7px solid transparent; border-top-color: inherit; border-bottom: 0; }
+  .bub.hot { background: #ffd0c8; } .bub.joy { background: #fff3b0; }
+  .float { position: absolute; transform: translate(-50%, -50%); font-weight: 900; font-size: 28px; color: #ffcf3a; text-shadow: 0 2px 0 #1d1420, 0 0 12px rgba(0,0,0,.6); white-space: nowrap; }
+  .ring { position: absolute; transform: translate(-50%, -50%); width: 26px; height: 26px; border-radius: 50%; border: 3px solid #ffcf3a; box-shadow: 0 0 0 3px rgba(0,0,0,.35); }
+  .name { position: absolute; transform: translate(-50%, 0); font-weight: 800; font-size: 12px; text-shadow: 0 1px 3px #000; }
+  #load { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #1d1420; font-weight: 800; z-index: 5; }
+  #load .bar { width: 220px; height: 8px; border-radius: 4px; background: rgba(255,255,255,.12); overflow: hidden; } #load i { display: block; height: 100%; width: 0; background: var(--acc); transition: width .2s; }
+  .hud { position: absolute; pointer-events: none; font-weight: 800; }
+  .pill { background: rgba(29,20,32,.78); border: 1px solid rgba(255,255,255,.14); border-radius: 12px; padding: 5px 10px; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+  #top { top: max(6px, env(safe-area-inset-top)); left: 8px; right: 8px; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  #tm { font-size: 18px; font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
+  #tm.low { color: #ff7a6a; }
+  #nst { font-size: 13px; text-align: center; line-height: 1.25; } #nst small { display: block; font-size: 11px; color: var(--mute); font-weight: 700; }
+  #sc { font-size: 18px; text-align: right; font-variant-numeric: tabular-nums; } #sc small { display: block; font-size: 11px; color: var(--acc); min-height: 13px; }
+  #bot { bottom: max(6px, env(safe-area-inset-bottom)); left: 8px; right: 8px; display: flex; align-items: flex-end; gap: 8px; }
+  #slot { width: 46px; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 28px; flex: none; }
+  #slot:empty::after { content: '✋'; opacity: .35; font-size: 22px; }
+  #chips { display: flex; gap: 4px; flex-wrap: wrap; pointer-events: auto; flex: 1; justify-content: center; }
+  .chip { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 19px; background: rgba(29,20,32,.7); border: 1px solid rgba(255,255,255,.12); position: relative; opacity: .55; }
+  .chip.arm { opacity: 1; border-color: var(--acc); box-shadow: 0 0 0 2px rgba(255,207,58,.35); }
+  .chip.done { opacity: 1; background: rgba(90,200,120,.35); border-color: #7ee05a; }
+  .chip.done::after { content: '✓'; position: absolute; right: -3px; bottom: -4px; font-size: 12px; background: #3bb36b; color: #fff; border-radius: 8px; width: 15px; height: 15px; display: flex; align-items: center; justify-content: center; }
+  .chip.need { opacity: 1; border-color: #4fd6ff; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 4px rgba(79,214,255,.35); } }
+  #leave { pointer-events: auto; background: var(--acc); color: var(--ink); border: 0; border-radius: 14px; font: 800 14px inherit; font-family: inherit; padding: 12px 14px; display: none; flex: none; box-shadow: 0 3px 0 #9a6f00; }
+  #toast { position: absolute; left: 50%; top: 58px; transform: translateX(-50%); background: rgba(29,20,32,.92); border: 1px solid rgba(255,255,255,.18); padding: 8px 14px; border-radius: 12px; font-weight: 800; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap; max-width: 90%; overflow: hidden; text-overflow: ellipsis; }
+  #toast.on { opacity: 1; }
+  .screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: radial-gradient(ellipse at 50% 40%, rgba(60,30,70,.72), rgba(20,12,24,.94)); padding: 16px; box-sizing: border-box; text-align: center; overflow-y: auto; }
+  .hidden { display: none !important; }
+  h1 { margin: 0; font-size: clamp(36px, 9vh, 64px); font-weight: 900; letter-spacing: .02em; color: var(--acc); text-shadow: 0 4px 0 #8a4a00, 0 10px 30px rgba(0,0,0,.5); font-style: italic; }
+  .sub { color: var(--mute); font-size: 15px; max-width: 420px; }
+  .main, .ghost { border: 0; border-radius: 16px; font-family: inherit; font-weight: 800; font-size: 17px; padding: 13px 22px; min-width: 250px; cursor: pointer; }
+  .main { background: linear-gradient(180deg, #ffe17a, #f0a92b); color: #2a1600; box-shadow: 0 4px 0 #94570a; }
+  .ghost { background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.18); }
+  .main:active, .ghost:active { transform: translateY(2px); }
+  .help { text-align: left; max-width: 520px; font-size: 14px; line-height: 1.45; color: #eadff0; }
+  .help b { color: var(--acc); }
+  #ores { font-size: 34px; font-weight: 900; color: var(--acc); } #ostars { font-size: 38px; letter-spacing: 6px; } #oline { color: var(--mute); }
+  @media (max-height: 380px) { .sub { display: none; } .main, .ghost { padding: 10px 18px; } #chips .chip { width: 28px; height: 28px; font-size: 16px; } #slot { width: 40px; height: 40px; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="cv"></canvas><div id="tags"></div><div id="load"><div>Строим дом…</div><div class="bar"><i id="lbar"></i></div></div>
+  <div class="hud" id="top"><div class="pill" id="tm">4:00</div><div class="pill" id="nst"></div><div class="pill" id="sc">0<small></small></div></div>
+  <div class="hud" id="bot"><div class="pill" id="slot"></div><div id="chips"></div><button id="leave">Выйти</button></div>
+  <div id="toast"></div>
+  <div class="screen" id="home">
+    <h1>Пакостники</h1>
+    <div class="sub">Пробирайся в дом к ворчливому соседу и устраивай ему пакости, пока он занят своими делами. Попадёшься на глаза — выкинет на улицу.</div>
+    <button class="main" id="goSolo">Играть</button>
+    <button class="ghost" id="goNet">С друзьями — скоро</button>
+    <button class="ghost" id="goHelp">Как играть</button>
+  </div>
+  <div class="screen hidden" id="help">
+    <div class="help">
+      <p><b>Тапни по полу</b> — пойдёшь туда. <b>Тапни по предмету</b> — подойдёшь и возьмёшь. В руках помещается одна вещь.</p>
+      <p><b>Подготовь пакость:</b> с нужной вещью тапни туда, где сосед будет что-то делать: перец — в кастрюлю, клей — на его стул. Внизу видно, какие пакости есть и что для них нужно.</p>
+      <p><b>Сосед ходит по кругу:</b> кухня, обед, телевизор, сад, душ, зубы, сон, работа. Вверху написано, чем он занят. Когда он дойдёт до подготовленного места — пакость сработает.</p>
+      <p><b>Не попадайся на глаза.</b> Жёлтый луч — куда он смотрит. В душе и во сне он ничего не видит. Заметил — беги на улицу или прячься: вешалка, штора, шкаф, стеллаж.</p>
+      <p><b>Серия:</b> пакости одна за другой (до 30 секунд между ними) дают ×2, ×3, ×4 очков.</p>
+    </div>
+    <button class="main" id="helpOk">Понятно</button>
+  </div>
+  <div class="screen hidden" id="over">
+    <div id="ores"></div><div id="ostars"></div><div id="oline"></div>
+    <button class="main" id="again">Ещё раз</button><button class="ghost" id="toHome">В меню</button>
+  </div>
+</div>
+<script type="module" src="./game3d.js"></script>
+</body>
+</html>

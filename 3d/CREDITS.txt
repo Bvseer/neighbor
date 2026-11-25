@@ -1,0 +1,2 @@
+Персонажи и анимации — Mixamo (Adobe), используются по лицензии Mixamo для игр.
+Конвертация: tools/convert.html (FBX -> GLB в браузере), tools/pack.mjs (сжатие), tools/tojson.mjs (GLB -> JSON glTF).
