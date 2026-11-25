@@ -401,11 +401,11 @@ const PRANK_Y = { pepper: 104, glue: 38, saw: 14, hose: 24, dye: 168, mustard: 9
 
 // ---- the screen, the hud, taps --------------------------------------------
 function resize() {
-  const w = innerWidth, h = innerHeight; ROT = h > w*1.05; document.body.classList.toggle('rot', ROT); CW = ROT ? h : w; CH = ROT ? w : h; DPR = Math.min(2, devicePixelRatio || 1);
+  const w = innerWidth, h = innerHeight; ROT = matchMedia('(pointer: coarse)').matches && h > w*1.05; document.body.classList.toggle('rot', ROT); CW = ROT ? h : w; CH = ROT ? w : h; DPR = Math.min(2, devicePixelRatio || 1);
   cv.width = Math.round(CW*DPR); cv.height = Math.round(CH*DPR);
   const s = Math.min(CW/1500, CH/(WY1 - WY0 + 40)); V.near = s < 0.62;
   if (!V.near) { V.s = s; V.ox = (CW - 1500*s)/2; V.oy = (CH - (WY1 - WY0)*s)/2 - WY0*s + 6; }
-  else { V.s = Math.min(CH/(NY1 - NY0), CW/1000); V.oy = -NY0*V.s; V.ox = clamp(CW/2 - 300*V.s, CW - WR*V.s, -WL*V.s); }
+  else { V.s = Math.min(CH/(NY1 - NY0), Math.max(CW/1000, 0.3)); V.oy = (CH - (NY1 - NY0)*V.s)/2 - NY0*V.s; V.ox = clamp(CW/2 - 300*V.s, CW - WR*V.s, -WL*V.s); }
   stKey = '';
 }
 addEventListener('resize', resize); resize();
