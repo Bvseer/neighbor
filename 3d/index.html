@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Пакостники</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script type="importmap">{ "imports": { "three": "./lib/three.module.js", "three/addons/": "./lib/addons/" } }</script>
 <style>
   :root { --ink: #1d1420; --acc: #ffcf3a; --mute: #b9a9c4; }
@@ -48,6 +49,8 @@
   .main { background: linear-gradient(180deg, #ffe17a, #f0a92b); color: #2a1600; box-shadow: 0 4px 0 #94570a; }
   .ghost { background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.18); }
   .main:active, .ghost:active { transform: translateY(2px); }
+  .main.alt { background: linear-gradient(180deg, #8ff0e2, #2fb8a6); box-shadow: 0 4px 0 #14695e; color: #04201c; }
+  #lList { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 420px; } #lList span { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.18); border-radius: 12px; padding: 7px 12px; font-weight: 800; }
   .help { text-align: left; max-width: 520px; font-size: 14px; line-height: 1.45; color: #eadff0; }
   .help b { color: var(--acc); }
   #ores { font-size: 34px; font-weight: 900; color: var(--acc); } #ostars { font-size: 38px; letter-spacing: 6px; } #oline { color: var(--mute); }
@@ -64,7 +67,7 @@
     <h1>Пакостники</h1>
     <div class="sub">Пробирайся в дом к ворчливому соседу и устраивай ему пакости, пока он занят своими делами. Попадёшься на глаза — выкинет на улицу.</div>
     <button class="main" id="goSolo">Играть</button>
-    <button class="ghost" id="goNet">С друзьями — скоро</button>
+    <button class="main alt" id="goNet">С друзьями</button>
     <button class="ghost" id="goHelp">Как играть</button>
   </div>
   <div class="screen hidden" id="help">
@@ -76,6 +79,14 @@
       <p><b>Серия:</b> пакости одна за другой (до 30 секунд между ними) дают ×2, ×3, ×4 очков.</p>
     </div>
     <button class="main" id="helpOk">Понятно</button>
+  </div>
+  <div class="screen hidden" id="lobby">
+    <h1 style="font-size:clamp(28px,7vh,44px)">Комната</h1>
+    <div class="sub" id="lWho"></div>
+    <div id="lList"></div>
+    <button class="main" id="lStart">Начать игру</button>
+    <button class="ghost" id="lInvite">Позвать друзей</button>
+    <button class="ghost" id="lLeave">Выйти</button>
   </div>
   <div class="screen hidden" id="over">
     <div id="ores"></div><div id="ostars"></div><div id="oline"></div>

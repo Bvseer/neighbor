@@ -153,7 +153,7 @@ function hud(S) {
 }
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), walkPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -ZP), hit = new THREE.Vector3();
 cv.addEventListener('pointerdown', (e) => {
-  if (!GAME) return; audioOn(); const S = VIEW; if (!S || S.ph !== 'play') return;
+  if (!GAME && !NET) return; audioOn(); const S = VIEW; if (!S || S.ph !== 'play') return;
   let px = e.clientX, py = e.clientY; if (CAM.rot) { px = e.clientY; py = innerWidth - e.clientX; }
   ndc.set(px/CAM.w*2 - 1, -(py/CAM.h)*2 + 1); ray.setFromCamera(ndc, camera);
   // a thing hit straight on counts first; otherwise where the ray crosses the plane people walk in
@@ -283,20 +283,53 @@ function events(S) {
 }
 
 // ---- a game on your own -------------------------------------------------------
-let GAME = null, VIEW = null; const ME = 'me';
-function send(c) { if (GAME) G.input(GAME, ME, c); }
+let GAME = null, VIEW = null, ME = 'me';
+function send(c) { if (NET) { if (NET.ws && NET.ws.readyState === 1) NET.ws.send(JSON.stringify({ t: 'in', c })); } else if (GAME) G.input(GAME, ME, c); }
+
+// ---- playing together: a room on the server; this game only shows what the server says and sends taps --------
+const API = 'https://neighbor.basirxujamuradov.workers.dev', BOT = 'annoyNeighborBot';
+const TG = window.Telegram && Telegram.WebApp && Telegram.WebApp.initData ? Telegram.WebApp : null;
+const zt = () => window.ZT || {}, initStr = () => zt().init || (TG ? TG.initData : '');
+let NET = null;
+function netJoin(room) {
+  netLeave(); GAME = null; const N = NET = { room, ws: null, view: null, ph: 'lobby', players: [], tries: 0, link: 'https://t.me/' + BOT + '?startapp=r_' + room }; SEEN = 0; PART.length = 0; show('lobby'); $('lWho').textContent = 'Подключаюсь…'; $('lList').innerHTML = '';
+  const open = () => { if (NET !== N) return; const ws = N.ws = new WebSocket((zt().ws || API.replace('https:', 'wss:')) + '/ws?room=' + room + '&init=' + encodeURIComponent(initStr()));
+    ws.onopen = () => { N.tries = 0; }; ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (x) { return; } netMsg(N, m); };
+    ws.onclose = (e) => { if (NET !== N) return; if (e.code === 4000) { toast('Ты зашёл в эту комнату с другого устройства', 3000); netLeave(); show('home'); return; } if (++N.tries > 4) { toast('Нет связи с комнатой', 3000); netLeave(); show('home'); return; } $('lWho').textContent = 'Связь пропала, переподключаюсь…'; setTimeout(open, 800*N.tries); }; };
+  open(); N.ping = setInterval(() => { if (N.ws && N.ws.readyState === 1) N.ws.send('{"t":"ping"}'); }, 20000);
+}
+function netMsg(N, m) {
+  if (m.t === 'hello') { N.me = m.me; ME = m.me; }
+  else if (m.t === 'lobby') { N.ph = m.ph; N.players = m.players; $('lList').innerHTML = m.players.map((p) => '<span>' + (p.id === N.me ? '⭐ ' : '') + p.name.replace(/[<>&]/g, '') + '</span>').join('');
+    $('lWho').textContent = m.players.length < 2 ? 'Пока ты один. Позови друзей — или начинай, они смогут зайти и во время игры.' : 'В комнате ' + m.players.length + ' из 4. Начать может любой.';
+    if (m.ph === 'play' && !$('lobby').classList.contains('hidden')) { show(null); toast('Поехали! Сосед пошёл варить суп', 2500); }
+    if (m.ph === 'lobby' && $('over').classList.contains('hidden')) show('lobby'); }
+  else if (m.t === 's') { if (N.view && m.s.k < SEEN) SEEN = 0; N.view = m.s; if (m.s.ph === 'play' && !$('lobby').classList.contains('hidden')) show(null); }
+}
+function netLeave() { if (!NET) return; const N = NET; NET = null; clearInterval(N.ping); try { N.ws && N.ws.close(); } catch (e) {} ME = 'me'; DISP.clear(); }
+async function netNew() { if (!initStr()) { toast('Игра с друзьями — в Telegram: @' + BOT, 3000); return; } try { const r = await (await fetch((zt().api || API) + '/new', { method: 'POST', body: JSON.stringify({ init: initStr() }) })).json(); if (r.ok) netJoin(r.id); else toast('Не получилось создать комнату', 2500); } catch (e) { toast('Нет связи с сервером', 2500); } }
+function netInvite() { if (!NET) return; const url = 'https://t.me/share/url?url=' + encodeURIComponent(NET.link) + '&text=' + encodeURIComponent('Пошли пакостить соседу! Заходи в мою комнату 🏠'); if (TG && TG.openTelegramLink) TG.openTelegramLink(url); else { try { navigator.clipboard.writeText(NET.link); toast('Ссылка скопирована'); } catch (e) { toast(NET.link, 4000); } } }
+// what the server says comes twenty times a second; in between, bodies glide to where they were last said to be
+const DISP = new Map();
+function smooth(v, dt) {
+  const k = Math.min(1, dt*14), go = (id, a) => { const d = DISP.get(id); if (!d || Math.hypot(a[0] - d[0], a[1] - d[1]) > 160) { DISP.set(id, [a[0], a[1]]); return a; } d[0] += (a[0] - d[0])*k; d[1] += (a[1] - d[1])*k; const b = a.slice(); b[0] = d[0]; b[1] = d[1]; return b; };
+  return Object.assign({}, v, { n: go('n', v.n), ps: v.ps.map((p) => go(p[4], p)) });
+}
 function startSolo() { GAME = G.newGame(); G.addPlayer(GAME, ME, 'Ты'); SEEN = 0; PART.length = 0; show(null); toast('Сосед пошёл варить суп. Возьми что-нибудь и действуй!', 3000); }
-function show(id) { for (const s of ['home', 'help', 'over']) $(s).classList.toggle('hidden', s !== id); }
+function show(id) { for (const s of ['home', 'help', 'over', 'lobby']) $(s).classList.toggle('hidden', s !== id); }
 function showOver(e) { const n = e.done; $('ores').textContent = n === 9 ? 'Сосед повержен!' : 'Время вышло'; $('ostars').textContent = n >= 9 ? '⭐⭐⭐' : n >= 6 ? '⭐⭐☆' : n >= 3 ? '⭐☆☆' : '☆☆☆'; $('oline').textContent = 'Пакостей: ' + n + ' из 9 · очков: ' + e.score; show('over'); }
-$('goSolo').onclick = () => { audioOn(); startSolo(); }; $('again').onclick = () => startSolo(); $('toHome').onclick = () => { GAME = null; show('home'); };
-$('goHelp').onclick = () => show('help'); $('helpOk').onclick = () => show(GAME ? null : 'home'); $('goNet').onclick = () => toast('Игра с друзьями появится совсем скоро', 2200);
+$('goSolo').onclick = () => { audioOn(); netLeave(); startSolo(); }; $('again').onclick = () => { if (NET && NET.ws) { NET.ws.send('{"t":"start"}'); show('lobby'); } else startSolo(); }; $('toHome').onclick = () => { netLeave(); GAME = null; show('home'); };
+$('lStart').onclick = () => { audioOn(); if (NET && NET.ws && NET.ws.readyState === 1) NET.ws.send('{"t":"start"}'); }; $('lInvite').onclick = netInvite; $('lLeave').onclick = () => { netLeave(); show('home'); };
+$('goHelp').onclick = () => show('help'); $('helpOk').onclick = () => show(GAME ? null : 'home'); $('goNet').onclick = () => { audioOn(); netNew(); };
 
 const IDLE = G.newGame(); let lastT = 0, acc = 0, SHF = 0;
 function loop(ts) {
   const dt = Math.min(0.05, (ts - lastT)/1000 || 0); lastT = ts; const now = ts/1000;
-  const S = GAME || IDLE; acc += dt; let n = 0; while (acc >= 1/60 && n++ < 6) { G.step(S, 1/60); acc -= 1/60; } if (S === IDLE && S.ph !== 'play') Object.assign(IDLE, G.newGame());
   SHF = (SHF + 1) % 2; sun.shadow.autoUpdate = false; sun.shadow.needsUpdate = Q === 2 || SHF === 0;
-  VIEW = G.snap(S); frameDraw(VIEW, dt, now); if (GAME) { hud(VIEW); events(VIEW); } if (dt > 0) watchSpeed(dt);
+  if (NET && NET.view) { VIEW = smooth(NET.view, dt); frameDraw(VIEW, dt, now); hud(VIEW); events(NET.view); }
+  else { const S = GAME || IDLE; acc += dt; let n = 0; while (acc >= 1/60 && n++ < 6) { G.step(S, 1/60); acc -= 1/60; } if (S === IDLE && S.ph !== 'play') Object.assign(IDLE, G.newGame());
+    VIEW = G.snap(S); frameDraw(VIEW, dt, now); if (GAME) { hud(VIEW); events(VIEW); } }
+  if (dt > 0) watchSpeed(dt);
   requestAnimationFrame(loop);
 }
 
@@ -305,5 +338,8 @@ function loop(ts) {
   let got = [0, 0]; const prog = (i) => (e) => { if (e.total) { got[i] = e.loaded/e.total; setLoad(0.5 + 0.45*(got[0] + got[1])/2); } };
   const [b, a] = await Promise.all([loader.loadAsync('./models/boss.json', prog(0)), loader.loadAsync('./models/aj.json', prog(1))]); BODY.boss = b; BODY.aj = a;
   setLoad(1); placeCamera(0, 0); $('load').style.display = 'none'; requestAnimationFrame(loop);
+  // opened from a room's button in a chat: straight into that room
+  if (TG) { try { TG.ready(); TG.expand(); if (TG.disableVerticalSwipes) TG.disableVerticalSwipes(); } catch (e) {} }
+  const sp = zt().start || (TG && TG.initDataUnsafe && TG.initDataUnsafe.start_param) || '', rm = /^r_([a-z0-9]{6,12})$/.exec(sp); if (rm && initStr()) netJoin(rm[1]);
 })().catch((e) => { $('load').innerHTML = '<div>Не удалось загрузить: ' + e.message + '</div>'; });
-window.__G = G; window.__Q = () => Q; window.__setQ = setQuality; window.__SLEEP = SLEEP; window.__S = () => GAME; window.__start = startSolo; window.__view = () => VIEW; window.__R = R; window.__scene = scene; window.__cam = camera;
+window.__G = G; window.__net = () => NET; window.__netJoin = netJoin; window.__Q = () => Q; window.__setQ = setQuality; window.__SLEEP = SLEEP; window.__S = () => GAME; window.__start = startSolo; window.__view = () => VIEW; window.__R = R; window.__scene = scene; window.__cam = camera;

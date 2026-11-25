@@ -1,0 +1,14 @@
+# Rooms for playing together, and the bot. Deployed by .github/workflows/deploy.yml.
+name = "neighbor"
+main = "3d/server/worker.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+keep_vars = true
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
