@@ -130,27 +130,53 @@ function setQuality(q) {
 // every two seconds: if frames took longer than about 1/45 s, one step down; if they came quickly for long, one step back up
 function watchSpeed(dt) { PERF.n++; PERF.t += dt; if (PERF.t < 2) return; const avg = PERF.t/PERF.n; PERF.n = 0; PERF.t = 0;
   if (avg > 1/45) { PERF.fast = 0; if (Q > 0 && ++PERF.slow >= 1) { PERF.slow = 0; setQuality(Q - 1); } } else if (avg < 1/57) { PERF.slow = 0; if (Q < QL.length - 1 && ++PERF.fast >= 8) { PERF.fast = 0; setQuality(Q + 1); } } else { PERF.slow = 0; PERF.fast = 0; } }
-function placeCamera(dt, fx) {
+function placeCamera(dt, fx, focus) {
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov/2)), a = camera.aspect;
-  // the whole house and its yards, or on a small screen the two floors and a part of the width, following you
-  const W = CAM.near ? 9.5 : 15.6, Hh = CAM.near ? 5.1 : 7.9, cy = CAM.near ? 2.35 : 3.1, d = Math.max(W/2/(t*a), Hh/2/t) + 0.6;
-  const half = W/2, tx = CAM.near ? clamp(fx, -7.2 + half, 7.6 - half) : 0.2; CAM.x = dt ? lerp(CAM.x, tx, Math.min(1, dt*3)) : tx;
-  camera.position.set(CAM.x, cy + 1.1, d - 1.6); camera.lookAt(CAM.x, cy - 0.05, -1.6); camera.updateMatrixWorld();
+  // the whole house and its yards, or on a small screen the two floors and a part of the width, following you; for a prank, close on him
+  const W = focus ? 4.6 : CAM.near ? 9.5 : 15.6, Hh = focus ? 2.8 : CAM.near ? 5.1 : 7.9, cy = focus ? focus.y + 1.0 : CAM.near ? 2.35 : 3.1, d = Math.max(W/2/(t*a), Hh/2/t) + 0.6;
+  const half = W/2, tx = focus ? fx : CAM.near ? clamp(fx, -7.2 + half, 7.6 - half) : 0.2, k = dt ? Math.min(1, dt*(focus ? 4 : 3)) : 1;
+  CAM.x = lerp(CAM.x, tx, k); CAM.y = lerp(CAM.y === undefined ? cy : CAM.y, cy, k); CAM.d = lerp(CAM.d === undefined ? d : CAM.d, d, k);
+  camera.position.set(CAM.x, CAM.y + 1.1*(CAM.d/12 + 0.2), CAM.d - 1.6); camera.lookAt(CAM.x, CAM.y - 0.05, -1.6); camera.updateMatrixWorld();
 }
 
 // ---- hud, taps, sounds: as in the flat version --------------------------------
 let toastT = 0; function toast(t, ms) { const e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => e.classList.remove('on'), ms || 1800); }
-for (const r of G.PRANKS) { const d = document.createElement('div'); d.className = 'chip'; d.id = 'c_' + r.id; d.textContent = G.ITEMS[r.item].ico; d.onclick = () => { const it = G.ITEMS[r.item], room = G.roomAt(it.fl, it.x), st = HUD.pr && HUD.pr[r.id]; toast(r.name + (st === 2 ? ' — готово ✓' : st === 1 ? ' — ждёт соседа' : ': ' + it.ico + ' ' + it.name.toLowerCase() + ' — ' + room.name.toLowerCase()), 2600); }; $('chips').appendChild(d); }
 const HUD = {};
+const big = (html, ms) => { const e = $('big'); e.innerHTML = html; e.classList.add('on'); clearTimeout(big.t); big.t = setTimeout(() => e.classList.remove('on'), ms || 1800); };
 function hud(S) {
+  if (S.hu) { huntHud(S); return; } $('rage').style.display = 'none'; $('bRun').style.display = $('bShout').style.display = GAME || NET ? 'block' : 'none'; runBtn(S);
   const m = Math.max(0, Math.ceil(S.left)), t = Math.floor(m/60) + ':' + String(m % 60).padStart(2, '0'); if (HUD.t !== t) { HUD.t = t; $('tm').textContent = t; $('tm').classList.toggle('low', m <= 30); }
   const a = G.ACTS[S.n[5]], md = S.n[4], nt = md === 'chase' ? '😡 Гонится за кем-то!' : md === 'alert' ? '😠 Кого-то заметил!' : md === 'search' ? '🧐 Ищет…' : md === 'react' ? '🤯 Попался!' : md === 'gloat' ? '😤 Выгоняет' : a.ico + ' Сосед ' + (md === 'walk' ? 'идёт: ' : '') + a.txt, nx = G.ACTS[(S.n[5] + 1) % G.ACTS.length], nt2 = 'потом ' + nx.txt;
   if (HUD.n !== nt + nt2) { HUD.n = nt + nt2; $('nst').innerHTML = nt + '<small>' + nt2 + '</small>'; }
   const sc = S.sc + '|' + S.cb; if (HUD.sc !== sc) { HUD.sc = sc; $('sc').innerHTML = S.sc + '<small>' + (S.cb > 1 ? 'серия ×' + S.cb : '') + '</small>'; }
   const me = S.ps.find((p) => p[4] === ME), item = me ? me[7] : '', hide = me ? me[8] : ''; if (HUD.item !== item) { HUD.item = item; $('slot').textContent = item ? G.ITEMS[item].ico : ''; }
   if (HUD.hide !== hide) { HUD.hide = hide; $('leave').style.display = hide ? 'block' : 'none'; }
-  HUD.pr = S.pr; const key = JSON.stringify(S.pr) + item; if (HUD.chips !== key) { HUD.chips = key; for (const r of G.PRANKS) $('c_' + r.id).className = 'chip' + (S.pr[r.id] === 2 ? ' done' : S.pr[r.id] === 1 ? ' arm' : item === r.item ? ' need' : ''); }
+  HUD.pr = S.pr; const key = JSON.stringify(S.pr) + item; if (HUD.chips !== key) { HUD.chips = key; chipsFor('pr'); for (const r of G.PRANKS) $('c_' + r.id).className = 'chip' + (S.pr[r.id] === 2 ? ' done' : S.pr[r.id] === 1 ? ' arm' : item === r.item ? ' need' : ''); }
 }
+// the chips along the bottom: pranks for pranksters, chores for the neighbour
+let CHIPS = ''; queueMicrotask(() => chipsFor('pr'));
+function chipsFor(kind) { if (CHIPS === kind) return; CHIPS = kind; const box = $('chips'); box.innerHTML = '';
+  if (kind === 'pr') for (const r of G.PRANKS) { const d = document.createElement('div'); d.className = 'chip'; d.id = 'c_' + r.id; d.textContent = G.ITEMS[r.item].ico; d.onclick = () => { const it = G.ITEMS[r.item], room = G.roomAt(it.fl, it.x), st = HUD.pr && HUD.pr[r.id]; toast(r.name + (st === 2 ? ' — готово ✓' : st === 1 ? ' — ждёт соседа' : ': ' + it.ico + ' ' + it.name.toLowerCase() + ' — ' + room.name.toLowerCase()), 2600); }; box.appendChild(d); }
+  else for (const a of G.ACTS) { const d = document.createElement('div'); d.className = 'chip'; d.id = 'a_' + a.id; d.textContent = a.ico; d.onclick = () => { if (VIEW && VIEW.td.includes(a.id)) { toast('Это уже сделано'); return; } send({ t: 'use', kind: 'act', id: a.id }); toast('Иду: ' + a.txt, 1500); }; box.appendChild(d); } HUD.chips = ''; }
+function runBtn(S) { const me = S.ps.find((p) => p[4] === ME); const on = !!(me && me[14]); $('bRun').classList.toggle('on', on); const cd = me ? me[15] : 0; $('bShout').disabled = cd > 0; $('bShout').textContent = cd > 0 ? '📢 ' + cd : '📢 Шум'; }
+function huntHud(S) {
+  const me = amN(), m = Math.max(0, Math.ceil(S.left)), t = Math.floor(m/60) + ':' + String(m % 60).padStart(2, '0'); if (HUD.t !== t) { HUD.t = t; $('tm').textContent = t; $('tm').classList.toggle('low', m <= 30); }
+  const nn = (NET && NET.players.find((p) => p.id === S.hu) || {}).name || 'Сосед', md = S.n[4], a = G.ACTS[S.n[5]];
+  const line = me ? '🏠 Ты — сосед · дела ' + S.td.length + '/' + G.HUNT.tasks : '😈 Сосед — ' + nn + (md === 'act' ? ': ' + a.txt : md === 'check' ? ': проверяет тайник' : '');
+  const sub = 'пакостей ' + S.fi + '/' + G.HUNT.pranks + (me ? '' : ' · его дела ' + S.td.length + '/' + G.HUNT.tasks);
+  if (HUD.n !== line + sub) { HUD.n = line + sub; $('nst').innerHTML = line + '<small>' + sub + '</small>'; }
+  const sc = me ? S.ns + '|n' : S.sc + '|' + S.cb; if (HUD.sc !== sc) { HUD.sc = sc; $('sc').innerHTML = (me ? S.ns : S.sc) + '<small>' + (!me && S.cb > 1 ? 'серия ×' + S.cb : '') + '</small>'; }
+  $('rage').style.display = 'block'; $('rage').firstChild.style.width = Math.round(S.rg*100) + '%';
+  const mine = S.ps.find((p) => p[4] === ME), item = mine ? mine[7] : '', hide = mine ? mine[8] : '';
+  if (HUD.item !== item) { HUD.item = item; $('slot').textContent = item ? G.ITEMS[item].ico : ''; } $('slot').style.display = me ? 'none' : '';
+  if (HUD.hide !== hide) { HUD.hide = hide; $('leave').style.display = hide ? 'block' : 'none'; }
+  $('bRun').style.display = $('bShout').style.display = me ? 'none' : 'block'; if (!me) runBtn(S);
+  HUD.pr = S.pr; const key = (me ? 'n' : 'p') + JSON.stringify(S.pr) + item + S.td.join(); if (HUD.chips !== key) { chipsFor(me ? 'act' : 'pr'); HUD.chips = key;
+    if (me) for (const a of G.ACTS) $('a_' + a.id).className = 'chip' + (S.td.includes(a.id) ? ' act-done' : '');
+    else for (const r of G.PRANKS) $('c_' + r.id).className = 'chip' + (S.pr[r.id] === 2 ? ' done' : S.pr[r.id] === 1 ? ' arm' : item === r.item ? ' need' : ''); }
+}
+$('bRun').onclick = () => { const me = VIEW && VIEW.ps.find((p) => p[4] === ME); send({ t: 'run', on: !(me && me[14]) }); };
+$('bShout').onclick = () => { send({ t: 'shout' }); };
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), walkPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -ZP), hit = new THREE.Vector3();
 cv.addEventListener('pointerdown', (e) => {
   if (!GAME && !NET) return; audioOn(); const S = VIEW; if (!S || S.ph !== 'play') return;
@@ -162,11 +188,15 @@ cv.addEventListener('pointerdown', (e) => {
   if (!ray.ray.intersectPlane(walkPlane, hit)) return; const wx = hit.x*100 + 756, fl = hit.y > F[1] - 0.25 ? 1 : 0; if (hit.y < -0.6 || hit.y > F[1] + 2.4) return;
   const me = S.ps.find((p) => p[4] === ME), have = me && me[7];
   let best = null, bd = CAM.near ? 55 : 45; const near = (o, kind, id) => { if (o.fl !== fl) return; const d = Math.abs(o.x - wx); if (d < bd) { bd = d; best = { kind, id }; } };
+  if (amN()) { for (const a of G.ACTS) if (!S.td.includes(a.id)) near(a, 'act', a.id); for (const h of G.HIDES) near(h, 'hide', h.id);
+    if (best) { send({ t: 'use', kind: best.kind, id: best.id }); const o = best.kind === 'act' ? G.ACTS.find((a) => a.id === best.id) : G.HIDES.find((h) => h.id === best.id); ring(o.x, o.fl); toast(best.kind === 'act' ? o.ico + ' ' + o.txt[0].toUpperCase() + o.txt.slice(1) : '🔎 Проверить: ' + o.name.toLowerCase(), 1500); }
+    else { send({ t: 'go', fl, x: wx }); ring(wx, fl); } return; }
+  if (S.hu || NET || GAME) near(G.BELL, 'bell', 'door');
   for (const r of G.PRANKS) if (!S.pr[r.id] && have === r.item) near(r, 'prank', r.id);
   if (!best) for (const k in G.ITEMS) if (S.it[k] === 'spot') near(G.ITEMS[k], 'item', k);
   if (!best) for (const h of G.HIDES) near(h, 'hide', h.id);
-  if (best) { send({ t: 'use', kind: best.kind, id: best.id }); const o = best.kind === 'item' ? G.ITEMS[best.id] : best.kind === 'prank' ? PR[best.id] : G.HIDES.find((h) => h.id === best.id); ring(o.x, o.fl);
-    if (best.kind === 'item') toast(G.ITEMS[best.id].ico + ' ' + G.ITEMS[best.id].name + ' — для: ' + G.PRANKS.find((r) => r.item === best.id).name.toLowerCase(), 2000); else if (best.kind === 'hide') toast('Прячусь: ' + G.HIDES.find((h) => h.id === best.id).name.toLowerCase()); }
+  if (best) { send({ t: 'use', kind: best.kind, id: best.id }); const o = best.kind === 'item' ? G.ITEMS[best.id] : best.kind === 'prank' ? PR[best.id] : best.kind === 'bell' ? G.BELL : G.HIDES.find((h) => h.id === best.id); ring(o.x, o.fl);
+    if (best.kind === 'bell') toast('🔔 Звоню в дверь — сосед пойдёт смотреть', 1800); else if (best.kind === 'item') toast(G.ITEMS[best.id].ico + ' ' + G.ITEMS[best.id].name + ' — для: ' + G.PRANKS.find((r) => r.item === best.id).name.toLowerCase(), 2000); else if (best.kind === 'hide') toast('Прячусь: ' + G.HIDES.find((h) => h.id === best.id).name.toLowerCase()); }
   else { for (const r of G.PRANKS) if (!S.pr[r.id] && r.fl === fl && Math.abs(r.x - wx) < 30) toast(r.name + ': нужно ' + G.ITEMS[r.item].ico + ' ' + G.ITEMS[r.item].name.toLowerCase(), 2200); send({ t: 'go', fl: fl, x: wx }); ring(wx, fl); }
 });
 function ring(x, fl) { tapRing.position.set(X(x), F[fl] + 0.03, ZP); tapRing.material.opacity = 1; tapRing.scale.setScalar(0.6); }
@@ -181,6 +211,8 @@ function sfx(kind) { if (!AC) return; const t = AC.currentTime, out = AC.createG
   else if (kind === 'caught') { noise(0.3, 3000, 300, 0.4); tone('sine', 300, 80, 0.4, 0.4); }
   else if (kind === 'prank') { tone('triangle', 520, 1040, 0.15, 0.3); tone('triangle', 660, 1320, 0.15, 0.3, 0.12); tone('triangle', 784, 1568, 0.3, 0.3, 0.24); noise(0.5, 1800, 400, 0.15); }
   else if (kind === 'no') tone('square', 200, 150, 0.12, 0.1);
+  else if (kind === 'step') noise(0.08, 900, 300, 0.25);
+  else if (kind === 'laugh') { for (let i = 0; i < 5; i++) { tone('triangle', 520 - i*30, 420 - i*30, 0.1, 0.18, i*0.13); } }
   else if (kind === 'over') { tone('triangle', 523, 523, 0.14, 0.25); tone('triangle', 659, 659, 0.14, 0.25, 0.14); tone('triangle', 784, 784, 0.4, 0.25, 0.28); } }
 
 // ---- labels over the picture: speech, points, the progress of an action -----------------
@@ -206,8 +238,8 @@ function frameDraw(S, dt, now) {
     const lie = (mode === 'act' && act.id === 'sleep') || (mode === 'react' && (fx === 'saw' || fx === 'soap'));
     const sitting = mode === 'act' && ['eat', 'tv', 'desk'].includes(act.id) || (mode === 'react' && ['glue', 'pins'].includes(fx) && N[14] < 0.3);
     const busy = { cook: 'cook', eat: 'eat', tv: 'sit', desk: 'type', sleep: 'sleep', garden: 'idle', shower: 'idle', teeth: 'idle' };
-    play(P, mode === 'chase' ? 'run' : mode === 'walk' ? 'walk' : mode === 'search' ? 'look' : mode === 'react' ? (lie ? 'fall' : 'scared') : mode === 'gloat' ? 'angry' : mode === 'alert' ? 'angry' : mode === 'act' ? busy[act.id] : 'idle');
-    P.mixer.timeScale = 1; P.mixer.update(dt); if (sitting) { sit(P); P.o.position.y = P.act.sit ? y + SIT_UP : y - 0.42; }
+    play(P, mode === 'chase' || (mode === 'walk' && S.hu) ? 'run' : mode === 'walk' ? 'walk' : mode === 'search' || mode === 'check' ? 'look' : mode === 'react' ? (lie ? 'fall' : 'scared') : mode === 'gloat' ? 'angry' : mode === 'alert' ? 'angry' : mode === 'act' ? busy[act.id] : 'idle');
+    P.mixer.timeScale = (mode === 'walk' || mode === 'chase') ? 1 + (S.rg || 0)*0.2 : 1; P.mixer.update(dt); if (sitting) { sit(P); P.o.position.y = P.act.sit ? y + SIT_UP : y - 0.42; }
     // with a real sleeping motion he lies on the bed by himself: put him there, head to the pillow
     if (mode === 'act' && act.id === 'sleep' && P.act.sleep) { P.o.position.set(X(SLEEP.x), F[1] + SLEEP.y, SLEEP.z); P.o.rotation.set(0, SLEEP.ry, 0); }
     if (lie && !(P.act.sleep && mode === 'act') && !(P.act.fall && mode === 'react')) { P.o.rotation.set(0, 0, act.id === 'sleep' && mode === 'act' ? Math.PI/2 : -Math.PI/2); P.o.position.set(act.id === 'sleep' && mode === 'act' ? X(800) : x, y + (act.id === 'sleep' && mode === 'act' ? 0.72 : 0.22), act.id === 'sleep' && mode === 'act' ? -2.15 : P.z); }
@@ -218,7 +250,7 @@ function frameDraw(S, dt, now) {
     // his own chair rides along once the glue has done its work
     if (N[12] > 0) { chair.position.set(x - (N[3] > 0 ? 0.25 : -0.25), y + 0.25, P.z - 0.05); chair.rotation.set(0, P.rot + Math.PI/2, 0.4); } else if (S.pr.glue === 2) { chair.position.set(X(836), 0, -2.05); chair.rotation.set(0, 0, Math.PI/2); chair.position.y = 0.22; } else { chair.position.copy(CHAIR_HOME); chair.rotation.set(0, 0, 0); }
     // where he looks
-    const see = mode === 'act' ? act.see : mode === 'walk' ? 430 : ['chase', 'search', 'alert'].includes(mode) ? 700 : 0, pp = cone.geometry.attributes.position, cc = cone.geometry.attributes.color;
+    const see = (S.hu ? (mode === 'act' ? act.see : ['idle', 'walk', 'check', 'gloat'].includes(mode) ? 620 : 0) : mode === 'act' ? act.see : mode === 'walk' ? 430 : ['chase', 'search', 'alert'].includes(mode) ? 700 : 0)*(1 + (S.rg || 0)*0.3), pp = cone.geometry.attributes.position, cc = cone.geometry.attributes.color;
     if (see > 0 && !N[15] && !lie) { const room = G.roomAt(N[2], N[0]), ex = X(clamp(N[0] + N[3]*see, room.x0, room.x1)), red = mode === 'chase' || mode === 'alert', hy = y + 1.62, zc = P.z + 0.05;
       pp.setXYZ(0, x + N[3]*0.12, hy + 0.05, zc); pp.setXYZ(1, ex, y + 2.0, zc); pp.setXYZ(2, ex, y + 0.02, zc); pp.setXYZ(3, x + N[3]*0.12, hy - 0.08, zc);
       const c = red ? [1, 0.25, 0.15] : [1, 0.85, 0.35]; for (let i = 0; i < 4; i++) cc.setXYZW(i, c[0], c[1], c[2], i === 0 || i === 3 ? 0.32 : 0); pp.needsUpdate = cc.needsUpdate = true; cone.visible = true; } else cone.visible = false;
@@ -243,16 +275,18 @@ function frameDraw(S, dt, now) {
     const party = S.t - (LASTPRANK || -99) < 3 && !moving && !ak;
     const chased = (N[4] === 'chase' || N[4] === 'alert') && N[16] === id;
     // near him he creeps, the motion sped up to the pace the game moves him at; elsewhere he runs, as the pace really is a jog
-    const nearN = N[2] === p[2] && Math.abs(N[0] - px) < 520 && !chased, stairs = Math.abs(l.y - y) > 0.0005, loco = chased || !nearN ? 'run' : stairs ? 'walk' : 'sneak';
-    play(Q, out > 0 ? 'sad' : ak === 'prank' ? 'pick' : ak === 'item' ? 'pick' : moving ? loco : party ? 'dance' : 'idle', 0.2);
-    Q.mixer.timeScale = moving ? (loco === 'sneak' ? 1.9 : loco === 'run' ? 0.78 : 1.3) : 1; Q.mixer.update(dt);
+    const loco = p[14] ? 'run' : 'sneak';
+    play(Q, out > 0 ? 'sad' : ak === 'prank' || ak === 'item' || ak === 'bell' ? 'pick' : moving ? loco : party ? 'dance' : 'idle', 0.2);
+    Q.mixer.timeScale = moving ? (loco === 'run' ? G.SPEED.RUN/425 : G.SPEED.SNEAK/102) : 1; Q.mixer.update(dt);
     Q.blob.position.set(x, y + 0.012, Q.z); Q.blob.visible = true;
+    if (Q.carry) Q.carry.o.visible = true;
     if (item) { const it = Q.carry && Q.carry.k === item ? Q.carry : (() => { if (Q.carry) Q.carry.o.removeFromParent(); const o = itemMesh(item); o.scale.setScalar(1.6); scene.add(o); return Q.carry = { k: item, o }; })(); Q.bones.hand.getWorldPosition(it.o.position); it.o.position.y += 0.03; it.o.rotation.y = now; }
     else if (Q.carry) { Q.carry.o.removeFromParent(); Q.carry = null; }
     if (ak) { const u = clamp(at/G.ACT_T[ak], 0, 1); tag('act' + id, 'ring', '', x, y + 2.0, Q.z); TAG['act' + id].style.background = 'conic-gradient(#ffcf3a ' + (u*360) + 'deg, rgba(0,0,0,.4) 0)'; }
     if (out > 0) tag('out' + id, 'bub', '😵 выгнали', x, y + 2.0, Q.z);
     if (S.ps.length > 1) { tag('nm' + id, 'name', name, x, y - 0.05, Q.z); TAG['nm' + id].style.color = G.COLORS[c]; } }
-  for (const [id, Q] of PEOPLE) if (id !== 'n' && !S.ps.some((p) => p[4] === id)) { Q.o.removeFromParent(); Q.blob.removeFromParent(); if (Q.carry) Q.carry.o.removeFromParent(); PEOPLE.delete(id); }
+  for (const [id, Q] of PEOPLE) if (id !== 'n' && !S.ps.some((p) => p[4] === id) && NET && NET.players.some((p) => p.id === id)) { Q.o.visible = false; Q.blob.visible = false; if (Q.carry) Q.carry.o.visible = false; }
+  for (const [id, Q] of PEOPLE) if (id !== 'n' && !S.ps.some((p) => p[4] === id) && !(NET && NET.players.some((p) => p.id === id))) { Q.o.removeFromParent(); Q.blob.removeFromParent(); if (Q.carry) Q.carry.o.removeFromParent(); PEOPLE.delete(id); }
   // things on their spots, armed pranks, where my thing is wanted
   for (const k in ITEMS) { const on = S.it[k] === 'spot'; ITEMS[k].o.visible = on; ITEMS[k].gl.visible = on; if (on) { ITEMS[k].gl.material.opacity = 0.55 + Math.sin(now*3 + G.ITEMS[k].x)*0.3; ITEMS[k].o.rotation.y = Math.sin(now*1.5 + G.ITEMS[k].x)*0.4; } }
   for (const r of G.PRANKS) ARMED[r.id].visible = S.pr[r.id] === 1;
@@ -265,7 +299,8 @@ function frameDraw(S, dt, now) {
   // floating labels
   for (let i = FLOATS.length - 1; i >= 0; i--) { const f = FLOATS[i]; f.life -= dt; if (f.life <= 0) { FLOATS.splice(i, 1); if (TAG['f' + f.id]) { TAG['f' + f.id].remove(); delete TAG['f' + f.id]; } continue; } if (!f.id) f.id = Math.random().toString(36).slice(2); const u = f.life/f.max; tag('f' + f.id, 'float', f.html, f.x, f.y + (1 - u)*0.6, f.z); TAG['f' + f.id].style.opacity = Math.min(1, u*2); }
   for (const k in TAG) if (!TAG[k]._seen) TAG[k].style.display = 'none';
-  placeCamera(dt, me ? X(me[0]) : X(N[0]));
+  const focus = CAM.focus && CAM.focus.t > 0 ? CAM.focus : null; if (focus) focus.t -= dt;
+  placeCamera(dt, focus ? focus.x : amN() || !me ? X(N[0]) : X(me[0]), focus);
   R.render(scene, camera);
 }
 
@@ -278,12 +313,18 @@ function events(S) {
     else if (e.e === 'no' && mine) { sfx('no'); toast(e.txt, 2000); }
     else if (e.e === 'spot') { sfx('spot'); if (mine) toast('Тебя заметили! Беги на улицу или прячься', 2200); }
     else if (e.e === 'caught') { sfx('caught'); if (mine) toast('Тебя выгнали! Возвращайся, когда очухаешься', 2400); for (let i = 0; i < 24; i++) part(X(100), 1, ZP, rnd(-1, 1), rnd(0.3, 1.5), rnd(-0.5, 0.5), 0.9, '#ffffff', 0.12, -1); }
-    else if (e.e === 'prank') { LASTPRANK = S.t; sfx('prank'); const N = S.n, x = X(N[0]), y = (540 - N[1])/100; FLOATS.push({ html: '+' + e.pts + (e.combo > 1 ? ' ×' + e.combo : ''), x, y: y + 2.3, z: -1.5, life: 1.8, max: 1.8 }); for (let i = 0; i < 40; i++) part(x, y + 1.2, -1.5, rnd(-2, 2), rnd(1, 3.5), rnd(-1, 1.5), 1.1, ['#ffcf3a', '#ff6fae', '#4fd6ff', '#7ee05a'][i % 4], 0.06, -6); }
+    else if (e.e === 'noise') { const icon = e.kind === 'bell' ? '🔔' : e.kind === 'shout' ? '📢' : '👣', room = G.ROOMS.find((r) => r.id === e.room);
+      if (amN() || !S.hu) FLOATS.push({ html: icon, x: X(e.x), y: G.FY ? (540 - G.FY[e.fl])/100 + 1.6 : 1.6, z: ZP, life: 1.4, max: 1.4 });
+      if (amN()) { sfx(e.kind === 'steps' ? 'step' : 'spot'); if (e.kind !== 'steps' || !HUD.stepT || S.t - HUD.stepT > 3) { HUD.stepT = S.t; toast(icon + ' ' + (e.kind === 'bell' ? 'Звонят в дверь!' : e.kind === 'shout' ? 'Шум: ' : 'Топот: ') + (e.kind === 'bell' ? '' : room ? room.name.toLowerCase() : ''), 1800); } }
+      else if (e.p === ME) toast(e.kind === 'bell' ? '🔔 Дзынь! Сосед услышит' : e.kind === 'shout' ? '📢 Сосед услышал шум' : '👣 Сосед слышит, как ты бежишь', 1400); }
+    else if (e.e === 'task') { const a = G.ACTS.find((x) => x.id === e.id); if (amN()) { sfx('pick'); toast('✅ ' + a.txt[0].toUpperCase() + a.txt.slice(1) + ' — сделано (' + e.n + '/' + G.HUNT.tasks + ')', 1800); } else if (S.hu) toast('Сосед сделал дело: ' + a.txt + ' (' + e.n + '/' + G.HUNT.tasks + ')', 1600); }
+    else if (e.e === 'prank') { LASTPRANK = S.t; sfx('prank'); const N = S.n, x = X(N[0]), y = (540 - N[1])/100; CAM.focus = { x, y, t: 2.4 }; big((PR[e.id] ? PR[e.id].say : '') + '<small>' + (amN() ? 'Тебя подловили: ' + PR[e.id].name.toLowerCase() : PR[e.id].name + ' · +' + e.pts + (e.combo > 1 ? ' ×' + e.combo : '')) + '</small>', 2300); setTimeout(() => sfx('laugh'), 250); FLOATS.push({ html: '+' + e.pts + (e.combo > 1 ? ' ×' + e.combo : ''), x, y: y + 2.3, z: -1.5, life: 1.8, max: 1.8 }); for (let i = 0; i < 40; i++) part(x, y + 1.2, -1.5, rnd(-2, 2), rnd(1, 3.5), rnd(-1, 1.5), 1.1, ['#ffcf3a', '#ff6fae', '#4fd6ff', '#7ee05a'][i % 4], 0.06, -6); }
     else if (e.e === 'over') { sfx('over'); setTimeout(() => showOver(e), 1300); } }
 }
 
 // ---- a game on your own -------------------------------------------------------
 let GAME = null, VIEW = null, ME = 'me';
+const amN = () => !!(VIEW && VIEW.hu && VIEW.hu === ME), hunt = () => !!(VIEW && VIEW.hu);
 function send(c) { if (NET) { if (NET.ws && NET.ws.readyState === 1) NET.ws.send(JSON.stringify({ t: 'in', c })); } else if (GAME) G.input(GAME, ME, c); }
 
 // ---- playing together: a room on the server; this game only shows what the server says and sends taps --------
@@ -301,8 +342,9 @@ function netJoin(room) {
 function netMsg(N, m) {
   if (m.t === 'hello') { N.me = m.me; ME = m.me; }
   else if (m.t === 'lobby') { N.ph = m.ph; N.players = m.players; $('lList').innerHTML = m.players.map((p) => '<span>' + (p.id === N.me ? '⭐ ' : '') + p.name.replace(/[<>&]/g, '') + '</span>').join('');
+    const nx = m.players.find((p) => p.id === m.next); $('lNext').textContent = nx ? 'Соседом в этом раунде будет: ' + (nx.id === N.me ? 'ты' : nx.name) : '';
     $('lWho').textContent = m.players.length < 2 ? 'Пока ты один. Позови друзей — или начинай, они смогут зайти и во время игры.' : 'В комнате ' + m.players.length + ' из 4. Начать может любой.';
-    if (m.ph === 'play' && !$('lobby').classList.contains('hidden')) { show(null); toast('Поехали! Сосед пошёл варить суп', 2500); }
+    if (m.ph === 'play' && !$('lobby').classList.contains('hidden')) { show(null); const hn = m.players.find((p) => p.id === m.hunter); big(m.hunter === N.me ? 'Ты — сосед!<small>Сделай 4 дела и лови пакостников</small>' : m.hunter ? 'Ты — пакостник!<small>Сосед — ' + (hn ? hn.name : '?') + '. Нужно 5 пакостей</small>' : 'Поехали!<small>Сосед пошёл варить суп</small>', 3000); }
     if (m.ph === 'lobby' && $('over').classList.contains('hidden')) show('lobby'); }
   else if (m.t === 's') { if (N.view && m.s.k < SEEN) SEEN = 0; N.view = m.s; if (m.s.ph === 'play' && !$('lobby').classList.contains('hidden')) show(null); }
 }
@@ -317,7 +359,10 @@ function smooth(v, dt) {
 }
 function startSolo() { GAME = G.newGame(); G.addPlayer(GAME, ME, 'Ты'); SEEN = 0; PART.length = 0; show(null); toast('Сосед пошёл варить суп. Возьми что-нибудь и действуй!', 3000); }
 function show(id) { for (const s of ['home', 'help', 'over', 'lobby']) $(s).classList.toggle('hidden', s !== id); }
-function showOver(e) { const n = e.done; $('ores').textContent = n === 9 ? 'Сосед повержен!' : 'Время вышло'; $('ostars').textContent = n >= 9 ? '⭐⭐⭐' : n >= 6 ? '⭐⭐☆' : n >= 3 ? '⭐☆☆' : '☆☆☆'; $('oline').textContent = 'Пакостей: ' + n + ' из 9 · очков: ' + e.score; show('over'); }
+function showOver(e) { if (e.win) { const nn = (NET && NET.players.find((p) => p.id === (VIEW && VIEW.hu)) || {}).name || 'Сосед', iWas = VIEW && VIEW.hu === ME, won = (e.win === 'n') === iWas;
+    $('ores').textContent = e.win === 'n' ? 'Сосед победил!' : 'Пакостники победили!'; $('ostars').textContent = won ? '🏆' : '😅';
+    $('oline').innerHTML = 'Соседом был ' + nn + '<br>пакостей ' + (VIEW ? VIEW.fi : 0) + '/' + G.HUNT.pranks + ' · дел соседа ' + e.tasks + '/' + G.HUNT.tasks + ' · поймано ' + e.caught; $('again').textContent = 'Следующий раунд'; show('over'); return; }
+  $('again').textContent = 'Ещё раз'; const n = e.done; $('ores').textContent = n === 9 ? 'Сосед повержен!' : 'Время вышло'; $('ostars').textContent = n >= 9 ? '⭐⭐⭐' : n >= 6 ? '⭐⭐☆' : n >= 3 ? '⭐☆☆' : '☆☆☆'; $('oline').textContent = 'Пакостей: ' + n + ' из 9 · очков: ' + e.score; show('over'); }
 $('goSolo').onclick = () => { audioOn(); netLeave(); startSolo(); }; $('again').onclick = () => { if (NET && NET.ws) { NET.ws.send('{"t":"start"}'); show('lobby'); } else startSolo(); }; $('toHome').onclick = () => { netLeave(); GAME = null; show('home'); };
 $('lStart').onclick = () => { audioOn(); if (NET && NET.ws && NET.ws.readyState === 1) NET.ws.send('{"t":"start"}'); }; $('lInvite').onclick = netInvite; $('lLeave').onclick = () => { netLeave(); show('home'); };
 $('goHelp').onclick = () => show('help'); $('helpOk').onclick = () => show(GAME ? null : 'home'); $('goNet').onclick = () => { audioOn(); netNew(); };

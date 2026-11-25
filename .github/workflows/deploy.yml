@@ -2,7 +2,8 @@ name: Deploy worker
 on:
   push:
     branches: [main]
-    paths: ['3d/server/**', '3d/sim.js', 'wrangler.toml', '.github/workflows/deploy.yml']
+    paths:
+      ['test/**', '3d/server/**', '3d/sim.js', 'wrangler.toml', '.github/workflows/deploy.yml']
   workflow_dispatch:
 jobs:
   deploy:
@@ -12,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check the server and the game logic
-        run: node --check 3d/server/worker.js && node test/sim.test.mjs
+        run: node --check 3d/server/worker.js && node test/sim.test.mjs && node test/hunt.test.mjs
       - name: Deploy to Cloudflare
         if: ${{ env.CF_TOKEN != '' }}
         uses: cloudflare/wrangler-action@v3

@@ -31,9 +31,9 @@ async function tg(env, method, body) { try { return await (await fetch('https://
 
 // ---- one room -------------------------------------------------------------
 export class Room {
-  constructor(state, env) { this.state = state; this.env = env; this.socks = new Map(); this.S = null; this.ph = 'lobby'; this.timer = null; this.acc = 0; this.last = 0; this.idle = 0; }
+  constructor(state, env) { this.state = state; this.env = env; this.socks = new Map(); this.S = null; this.ph = 'lobby'; this.timer = null; this.acc = 0; this.last = 0; this.idle = 0; this.round = 0; }
   people() { return [...this.socks.values()].filter((v, i, a) => a.findIndex((w) => w.id === v.id) === i); }
-  lobby() { const ps = this.people(); return { t: 'lobby', ph: this.ph, players: ps.map((p) => ({ id: p.id, name: p.name })), score: this.S ? this.S.score : 0 }; }
+  lobby() { const ps = this.people(), next = ps.length > 1 ? ps[this.round % ps.length] : null; return { t: 'lobby', ph: this.ph, players: ps.map((p) => ({ id: p.id, name: p.name })), next: next ? next.id : null, hunter: this.S ? this.S.hunter : null, round: this.round }; }
   send(ws, o) { try { ws.send(typeof o === 'string' ? o : JSON.stringify(o)); } catch (e) {} }
   all(o) { const s = JSON.stringify(o); for (const ws of this.socks.keys()) this.send(ws, s); }
   async fetch(request) {
@@ -44,28 +44,30 @@ export class Room {
     // the same person from a second window: the older one goes
     for (const [ws, v] of this.socks) if (v.id === id) { this.send(ws, { t: 'bye', why: 'again' }); try { ws.close(4000, 'again'); } catch (e) {} this.socks.delete(ws); }
     this.socks.set(server, { id, name, seen: Date.now() }); this.sweepOn();
-    if (this.ph === 'play' && this.S) G.addPlayer(this.S, id, name);
-    this.send(server, { t: 'hello', me: id }); this.all(this.lobby()); if (this.ph === 'play' && this.S) this.send(server, { t: 's', s: G.snap(this.S) });
+    if (this.ph === 'play' && this.S && this.S.hunter !== id) G.addPlayer(this.S, id, name);
+    this.send(server, { t: 'hello', me: id }); this.all(this.lobby()); if (this.ph === 'play' && this.S) this.send(server, { t: 's', s: G.snapFor(this.S, id) });
     server.addEventListener('message', (e) => this.onMessage(server, e.data));
     const gone = () => this.leave(server); server.addEventListener('close', gone); server.addEventListener('error', gone);
     return new Response(null, { status: 101, webSocket: client });
   }
   onMessage(ws, data) {
     const me = this.socks.get(ws); if (!me || typeof data !== 'string' || data.length > 500) return; me.seen = Date.now(); let m; try { m = JSON.parse(data); } catch (e) { return; }
-    if (m.t === 'in' && this.ph === 'play' && this.S && m.c && typeof m.c === 'object') G.input(this.S, me.id, { t: String(m.c.t), fl: m.c.fl | 0, x: +m.c.x, kind: String(m.c.kind || ''), id: String(m.c.id || '') });
+    if (m.t === 'in' && this.ph === 'play' && this.S && m.c && typeof m.c === 'object') G.input(this.S, me.id, { t: String(m.c.t), fl: m.c.fl | 0, x: +m.c.x, kind: String(m.c.kind || ''), id: String(m.c.id || ''), on: !!m.c.on });
     else if (m.t === 'start' && this.ph !== 'play') this.start();
     else if (m.t === 'ping') this.send(ws, { t: 'pong' });
   }
-  leave(ws) { const me = this.socks.get(ws); if (!me) return; this.socks.delete(ws); if (this.S && !this.people().some((p) => p.id === me.id)) G.removePlayer(this.S, me.id); this.all(this.lobby()); if (!this.socks.size) this.stop(); }
+  leave(ws) { const me = this.socks.get(ws); if (!me) return; this.socks.delete(ws);
+    // the neighbour left in the middle of a round: the computer takes over his part
+    if (this.S && !this.people().some((p) => p.id === me.id)) { if (this.S.hunter === me.id) { this.S.hunter = null; this.S.n.mode = 'walk'; this.S.n.ai = this.S.n.ai | 0; } else G.removePlayer(this.S, me.id); } this.all(this.lobby()); if (!this.socks.size) this.stop(); }
   // a phone that has gone quiet for 45 s is gone, even if its connection never said so (phones ping every 20 s)
   sweepOn() { if (this.sweeper) return; this.sweeper = setInterval(() => { const t = Date.now(); for (const [ws, v] of this.socks) if (t - v.seen > 45000) { try { ws.close(4001, 'quiet'); } catch (e) {} this.leave(ws); } if (!this.socks.size) { clearInterval(this.sweeper); this.sweeper = null; } }, 10000); }
-  start() { const S = G.newGame(); for (const p of this.people()) G.addPlayer(S, p.id, p.name); this.S = S; this.ph = 'play'; this.acc = 0; this.last = Date.now(); this.all(this.lobby()); this.run(); }
+  start() { const ps = this.people(), hunter = ps.length > 1 ? ps[this.round % ps.length].id : null; this.round++; const S = G.newGame(hunter); for (const p of ps) G.addPlayer(S, p.id, p.name); this.S = S; this.ph = 'play'; this.acc = 0; this.last = Date.now(); this.all(this.lobby()); this.run(); }
   run() { if (this.timer) return; this.timer = setInterval(() => this.tick(), TICK); }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
   tick() {
     const t = Date.now(); this.acc += Math.min(250, t - this.last); this.last = t; const S = this.S; if (!S) return this.stop();
     let n = 0; while (this.acc >= 1000/60 && n++ < 15) { G.step(S, 1/60); this.acc -= 1000/60; }
-    this.all({ t: 's', s: G.snap(S) });
+    for (const [ws, v] of this.socks) this.send(ws, { t: 's', s: G.snapFor(S, v.id) });
     if (S.ph === 'over') { this.ph = 'over'; this.stop(); this.all(this.lobby()); }
   }
 }

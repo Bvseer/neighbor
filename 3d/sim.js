@@ -3,8 +3,11 @@
 
 export const W = 1500;
 export const FY = [540, 300];               // where feet stand on the ground floor and upstairs
-export const ROUND = 240;                   // seconds in a round
-const PSPD = 225, NWALK = 140, NCHASE = 205, STAIR_T = 0.85, CATCH = 30;
+export const ROUND = 300;                   // seconds in a round
+// speeds come from the motions themselves, so feet do not slide: creeping 1 m/s, running 3, his walk 1.4, his chase 2.4
+const SNEAK = 102, RUN = 300, NWALK = 139, NCHASE = 240, STAIR_T = 0.85, CATCH = 34;
+export const SPEED = { SNEAK, RUN, NWALK, NCHASE };
+export const HUNT = { tasks: 4, pranks: 5, round: 180, task: 5, check: 0.8, out: 8, bell: 20, noise: 12 };
 
 export const ROOMS = [
   { id: 'street', fl: 0, x0: 0, x1: 222, name: 'Улица', out: true, safe: true },
@@ -52,6 +55,7 @@ export const PRANKS = [
   { id: 'pins', act: 'desk', item: 'pins', fl: 1, x: 1085, name: 'Кнопки на стуле', say: 'АЙ!!' },
   { id: 'soap', stair: 'A', item: 'soap', fl: 0, x: 372, name: 'Мыло на лестнице', say: 'Уо-о-о-о!' },
 ];
+export const BELL = { fl: 0, x: 236 };       // the doorbell by the front door
 export const HIDES = [
   { id: 'coat', fl: 0, x: 298, name: 'За вешалкой' },
   { id: 'curtain', fl: 0, x: 1262, name: 'За шторой' },
@@ -91,15 +95,17 @@ function move(e, sp, dt, S) {               // returns true when the end of the 
 }
 
 // ---- a game ----
-export function newGame() {
-  return { t: 0, left: ROUND, ph: 'play', score: 0, combo: 0, last: -99, players: [], seq: 0, ev: [],
+export function newGame(hunter) {
+  const S = { t: 0, left: hunter ? HUNT.round : ROUND, ph: 'play', score: 0, combo: 0, last: -99, players: [], seq: 0, ev: [], hunter: hunter || null, tdone: {}, fired: 0, nscore: 0, rage: 0, bellAt: -99, win: '',
     items: Object.fromEntries(Object.keys(ITEMS).map((k) => [k, 'spot'])), pranks: Object.fromEntries(PRANKS.map((p) => [p.id, 0])),
     n: { fl: 0, x: 1010, st: null, path: [{ x: ACTS[0].x }], face: -1, mode: 'walk', ai: 0, t: 0, tgt: null, lost: 0, say: '', sayT: 0, mood: 0, blue: 0, wet: 0, chair: 0, fx: '', fxT: 0 } };
+  if (hunter) { S.n.mode = 'idle'; S.n.path = []; S.n.x = 1000; S.n.face = -1; }
+  return S;
 }
 export function addPlayer(S, id, name) {
   let p = S.players.find((q) => q.id === id); if (p) { p.gone = 0; return p; }
-  const used = S.players.map((q) => q.c); let c = 0; while (used.includes(c) && c < 3) c++;
-  p = { id: id, name: name || 'Игрок', c: c, fl: 0, x: 70 + S.players.length*40, st: null, path: [], face: 1, item: null, goal: null, act: null, hide: null, out: 0, caught: 0, pranks: 0, gone: 0 };
+  if (id === S.hunter) return null; const used = S.players.map((q) => q.c); let c = 0; while (used.includes(c) && c < 3) c++;
+  p = { id: id, name: name || 'Игрок', c: c, fl: 0, x: 70 + S.players.length*40, st: null, path: [], face: 1, item: null, goal: null, act: null, hide: null, out: 0, caught: 0, pranks: 0, gone: 0, run: false, nT: 0, shoutAt: -99 };
   S.players.push(p); return p;
 }
 export function removePlayer(S, id) { const p = S.players.find((q) => q.id === id); if (!p) return; if (p.item) S.items[p.item] = 'spot'; S.players.splice(S.players.indexOf(p), 1); if (S.n.tgt === id) giveUp(S); }
@@ -108,18 +114,23 @@ const ev = (S, o) => { o.k = ++S.seq; S.ev.push(o); if (S.ev.length > 40) S.ev.s
 
 // what a player asked for: {t:'go', fl, x} to walk, {t:'use', kind:'item'|'prank'|'hide', id} to do something there, {t:'leave'} to come out of hiding
 export function input(S, id, c) {
-  const p = S.players.find((q) => q.id === id); if (!p || S.ph !== 'play' || p.out > 0 || !c) return;
+  if (S.ph !== 'play' || !c) return; if (S.hunter && id === S.hunter) { hunterInput(S, c); return; }
+  const p = S.players.find((q) => q.id === id); if (!p) return;
+  if (c.t === 'run') { p.run = !!c.on; return; }
+  if (p.out > 0) return;
+  if (c.t === 'shout') { if (S.t - p.shoutAt < HUNT.noise || p.hide) return; p.shoutAt = S.t; heard(S, floorOf(p), pos(p).x, 'shout', p.id); return; }
   if (p.hide) { const h = hideById[p.hide]; p.hide = null; p.x = h.x; p.fl = h.fl; ev(S, { e: 'unhide', p: id }); if (c.t === 'leave') return; }
   p.act = null; p.goal = null;
   if (c.t === 'go' && (c.fl === 0 || c.fl === 1) && isFinite(c.x)) plan(p, c.fl, +c.x);
-  else if (c.t === 'use') { const o = c.kind === 'item' ? ITEMS[c.id] : c.kind === 'prank' ? prankById[c.id] : c.kind === 'hide' ? hideById[c.id] : null; if (!o) return; p.goal = { kind: c.kind, id: c.id }; plan(p, o.fl, o.x); }
+  else if (c.t === 'use') { const o = c.kind === 'item' ? ITEMS[c.id] : c.kind === 'prank' ? prankById[c.id] : c.kind === 'hide' ? hideById[c.id] : c.kind === 'bell' ? BELL : null; if (!o) return; p.goal = { kind: c.kind, id: c.id }; plan(p, o.fl, o.x); }
 }
 const why = (S, p, g) => {                  // can this be done here and now? '' if it can, otherwise what to tell the player
   if (g.kind === 'item') return S.items[g.id] !== 'spot' ? 'Уже забрали' : p.item ? 'Руки заняты: сначала используй ' + ITEMS[p.item].name.toLowerCase() : '';
+  if (g.kind === 'bell') return S.t - S.bellAt < HUNT.bell ? 'Звонок ещё не остыл: ' + Math.ceil(HUNT.bell - (S.t - S.bellAt)) + ' с' : '';
   if (g.kind === 'prank') { const r = prankById[g.id]; return S.pranks[g.id] ? 'Тут уже всё готово' : p.item !== r.item ? 'Нужно: ' + ITEMS[r.item].ico + ' ' + ITEMS[r.item].name.toLowerCase() : ''; }
   return '';
 };
-export const ACT_T = { item: 0.45, prank: 1.6, hide: 0.15 };
+export const ACT_T = { item: 0.45, prank: 1.6, hide: 0.15, bell: 0.3 };
 
 function stepPlayer(S, p, dt) {
   if (p.out > 0) { p.out -= dt; return; }
@@ -127,18 +138,27 @@ function stepPlayer(S, p, dt) {
   if (p.act) { p.act.t += dt; if (p.act.t >= ACT_T[p.act.kind]) { const g = p.act; p.act = null; const no = why(S, p, g); if (no) { ev(S, { e: 'no', p: p.id, txt: no }); return; }
       if (g.kind === 'item') { S.items[g.id] = p.id; p.item = g.id; ev(S, { e: 'pick', p: p.id, id: g.id }); }
       else if (g.kind === 'prank') { S.items[p.item] = 'used'; p.item = null; S.pranks[g.id] = 1; ev(S, { e: 'arm', p: p.id, id: g.id }); }
+      else if (g.kind === 'bell') { S.bellAt = S.t; heard(S, BELL.fl, BELL.x, 'bell', p.id); }
       else { p.hide = g.id; ev(S, { e: 'hide', p: p.id, id: g.id }); } } return; }
-  if (move(p, PSPD, dt, S) && p.goal) { const g = p.goal; p.goal = null; const no = why(S, p, g); if (no) ev(S, { e: 'no', p: p.id, txt: no }); else { p.act = { kind: g.kind, id: g.id, t: 0 }; if (g.kind === 'prank') p.face = prankById[g.id].x > p.x ? 1 : -1; } }
+  const moving = p.path.length || p.st; if (moving && p.run) { p.nT += dt; if (p.nT > 0.7) { p.nT = 0; heard(S, floorOf(p), pos(p).x, 'steps', p.id); } }
+  if (move(p, p.run ? RUN : SNEAK, dt, S) && p.goal) { const g = p.goal; p.goal = null; const no = why(S, p, g); if (no) ev(S, { e: 'no', p: p.id, txt: no }); else { p.act = { kind: g.kind, id: g.id, t: 0 }; if (g.kind === 'prank') p.face = prankById[g.id].x > p.x ? 1 : -1; } }
 }
 
+// ---- noise: steps, the bell, a shout; the computer neighbour goes to look, a player neighbour is told where
+function heard(S, fl, x, kind, by) {
+  const room = roomAt(fl, x); ev(S, { e: 'noise', kind, room: room.id, fl, x: Math.round(x), p: by }); if (kind !== 'steps') S.rage = Math.min(1, S.rage + 0.03);
+  const n = S.n; if (S.hunter || room.safe) return;
+  const near = floorOf(n) === fl && Math.abs(pos(n).x - x) < 650, loud = kind !== 'steps';
+  if ((loud || near) && ['walk', 'act'].includes(n.mode) && !(n.mode === 'act' && ACTS[n.ai].see === 0)) { n.mode = 'search'; n.t = 2.2; plan(n, fl, room.out ? Math.max(260, Math.min(1270, x)) : x); say(S, kind === 'bell' ? 'Кто там звонит?!' : 'Что за шум?', 1.6); }
+}
 // ---- the neighbour ----
 function sees(S, p) {
-  const n = S.n; if (p.out > 0 || p.hide || p.gone) return false; if (n.mode === 'react' || n.mode === 'gloat') return false;
+  const n = S.n; if (p.out > 0 || p.hide || p.gone) return false; if (n.mode === 'react' || (n.mode === 'gloat' && !S.hunter)) return false;
   const nf = floorOf(n), pf = floorOf(p); if (nf !== pf) return false; const np = pos(n), pp = pos(p), rn = roomAt(nf, np.x), rp = roomAt(pf, pp.x);
   if (rp.safe || rn !== rp) return false; const dx = pp.x - np.x, ad = Math.abs(dx);
-  const act = n.mode === 'act' ? actById[ACTS[n.ai].id] : null, range = n.mode === 'chase' || n.mode === 'search' ? 700 : act ? act.see : 430;
+  const act = n.mode === 'act' ? actById[ACTS[n.ai].id] : null, range = (S.hunter ? (act ? act.see : 620) : n.mode === 'chase' || n.mode === 'search' ? 700 : act ? act.see : 430)*(1 + S.rage*0.3);
   if (range <= 0) return ad < 40 && n.mode !== 'act';
-  return ad < 55 || (ad < range && Math.sign(dx) === n.face);
+  return ad < (S.hunter ? 22 : 55) || (ad < range && Math.sign(dx) === n.face);
 }
 function goAct(S) { const a = ACTS[S.n.ai], n = S.n; n.mode = 'walk'; n.tgt = null; plan(n, a.fl, a.x); }
 function giveUp(S) { const n = S.n; n.tgt = null; n.mood = Math.max(0, n.mood - 1); goAct(S); }
@@ -148,12 +168,13 @@ function startAct(S) {
 }
 function spring(S, pr) {                    // a prank goes off
   const n = S.n; S.pranks[pr.id] = 2; n.mode = 'react'; n.fx = pr.id; n.fxT = 0; n.t = 3.2; n.path = []; n.mood = Math.min(3, n.mood + 1); say(S, pr.say, 2.6);
-  S.combo = S.t - S.last < 30 ? Math.min(4, S.combo + 1) : 1; S.last = S.t; const pts = 100*S.combo; S.score += pts;
+  S.combo = S.t - S.last < 30 ? Math.min(4, S.combo + 1) : 1; S.last = S.t; const pts = 100*S.combo; S.score += pts; S.fired++; S.rage = Math.min(1, S.rage + 0.2);
   if (pr.id === 'dye') n.blue = 1; if (pr.id === 'hose') n.wet = 25; if (pr.id === 'glue') n.chair = 30;
   ev(S, { e: 'prank', id: pr.id, pts: pts, combo: S.combo });
-  if (PRANKS.every((r) => S.pranks[r.id] === 2)) { S.score += Math.round(S.left)*5; end(S); }
+  if (S.hunter ? S.fired >= HUNT.pranks : PRANKS.every((r) => S.pranks[r.id] === 2)) { if (!S.hunter) S.score += Math.round(S.left)*5; end(S); }
 }
-function end(S) { S.ph = 'over'; ev(S, { e: 'over', score: S.score, done: PRANKS.filter((r) => S.pranks[r.id] === 2).length }); }
+function end(S) { S.ph = 'over'; const done = PRANKS.filter((r) => S.pranks[r.id] === 2).length, tasks = Object.keys(S.tdone).length;
+  S.win = S.hunter ? (S.fired >= HUNT.pranks || tasks < HUNT.tasks ? 'pr' : 'n') : ''; ev(S, { e: 'over', score: S.score, done, tasks, win: S.win, nscore: S.nscore, caught: S.players.reduce((a, p) => a + p.caught, 0) }); }
 function stepN(S, dt) {
   const n = S.n; n.sayT = Math.max(0, n.sayT - dt); n.wet = Math.max(0, n.wet - dt); n.chair = Math.max(0, n.chair - dt); if (n.fx) n.fxT += dt;
   if (!n.onStair) n.onStair = (s, S2) => { if (s.id === 'A' && S2.pranks.soap === 1 && S2.n.mode !== 'react') { spring(S2, prankById.soap); S2.n.after = 'resume'; } };
@@ -168,24 +189,48 @@ function stepN(S, dt) {
     if (n.lost > 2.5) { n.mode = 'search'; n.t = 1.6; n.path = []; return; }
     n.re -= dt; if (n.re <= 0) { n.re = 0.25; const tg = n.lx || { fl: p.fl, x: pp.x }; plan(n, tg.fl, tg.x); }
     if (!p.st && !n.st && p.fl === n.fl && Math.abs(pp.x - np.x) < CATCH) { catchP(S, p); return; }
-    move(n, NCHASE, dt, S); return;
+    move(n, NCHASE*(1 + S.rage*0.15), dt, S); return;
   }
   if (n.mode === 'search') { if (move(n, NWALK, dt, S)) { n.t -= dt; n.face = Math.sin(S.t*3) > 0 ? 1 : -1; } for (const p of S.players) if (sees(S, p)) { spot(S, p); return; } if (n.t <= 0) { say(S, 'Показалось…', 1.2); giveUp(S); } return; }
   for (const p of S.players) if (sees(S, p)) { spot(S, p); return; }
-  if (n.mode === 'walk') { if (move(n, NWALK, dt, S)) startAct(S); return; }
+  if (n.mode === 'walk') { if (move(n, NWALK*(1 + S.rage*0.25), dt, S)) startAct(S); return; }
   if (n.mode === 'act') { n.t -= dt; if (n.t <= 0) { n.ai = (n.ai + 1) % ACTS.length; goAct(S); } }
 }
 function spot(S, p) { const n = S.n; n.mode = 'alert'; n.t = 0.55; n.tgt = p.id; n.path = []; say(S, '!!!', 0.6); ev(S, { e: 'spot', p: p.id }); }
 function catchP(S, p) {
-  const n = S.n; if (p.item) S.items[p.item] = 'spot'; p.item = null; p.hide = null; p.act = null; p.goal = null; p.path = []; p.st = null; p.fl = 0; p.x = 60 + Math.random()*120; p.out = 4; p.caught++;
+  const n = S.n; if (p.item) S.items[p.item] = 'spot'; p.item = null; p.hide = null; p.act = null; p.goal = null; p.path = []; p.st = null; p.fl = 0; p.x = 60 + Math.random()*120; p.out = S.hunter ? HUNT.out : 4; p.caught++; p.run = false; if (S.hunter) S.nscore += 80;
   n.mode = 'gloat'; n.t = 1.4; n.tgt = null; n.path = []; say(S, 'Вон из моего дома!', 2); ev(S, { e: 'caught', p: p.id });
 }
+
+// ---- a player as the neighbour: walks where he is sent, does his chores, looks into hiding places, catches whom he sees close up
+function hunterInput(S, c) {
+  const n = S.n; if (n.mode === 'react' || n.mode === 'gloat') return; n.goal = null;
+  if (c.t === 'go' && (c.fl === 0 || c.fl === 1) && isFinite(c.x)) { plan(n, c.fl, Math.max(232, Math.min(1500, +c.x))); n.mode = 'walk'; }
+  else if (c.t === 'use' && c.kind === 'act' && actById[c.id]) { const a = actById[c.id]; n.goal = { kind: 'act', id: c.id }; plan(n, a.fl, a.x); n.mode = 'walk'; }
+  else if (c.t === 'use' && c.kind === 'hide' && hideById[c.id]) { const h = hideById[c.id]; n.goal = { kind: 'hide', id: c.id }; plan(n, h.fl, h.x); n.mode = 'walk'; }
+  else if (c.t === 'run') n.run = !!c.on;
+}
+function stepHunter(S, dt) {
+  const n = S.n; n.sayT = Math.max(0, n.sayT - dt); n.wet = Math.max(0, n.wet - dt); n.chair = Math.max(0, n.chair - dt); if (n.fx) n.fxT += dt;
+  if (!n.onStair) n.onStair = (s, S2) => { if (s.id === 'A' && S2.pranks.soap === 1 && S2.n.mode !== 'react') { spring(S2, prankById.soap); S2.n.after = 'idle'; } };
+  if (n.mode === 'react') { n.t -= dt; if (n.t <= 0) { n.fx = ''; n.mode = 'idle'; if (n.after) { n.after = null; } } return; }
+  if (n.mode === 'gloat') { n.t -= dt; if (n.t <= 0) n.mode = 'idle'; return; }
+  if (n.mode === 'act') { n.t -= dt; const a = ACTS[n.ai]; if (n.t <= 0) { if (!S.tdone[a.id]) { S.tdone[a.id] = 1; S.nscore += 60; ev(S, { e: 'task', id: a.id, n: Object.keys(S.tdone).length }); } n.mode = 'idle'; } }
+  else if (n.mode === 'check') { n.t -= dt; if (n.t <= 0) { const h = n.chk; n.mode = 'idle'; const p = S.players.find((q) => q.hide === h); if (p) { catchP(S, p); say(S, 'Попался, голубчик!', 2); } else say(S, 'Никого…', 1.2); } return; }
+  else if (n.mode === 'walk') { if (move(n, NCHASE*(1 + S.rage*0.2), dt, S)) { const g = n.goal; n.goal = null; n.mode = 'idle';
+      if (g && g.kind === 'act') { const a = actById[g.id]; n.ai = ACTS.indexOf(a); n.face = a.face; if (S.tdone[a.id]) say(S, 'Это я уже сделал', 1.4); else { n.mode = 'act'; n.t = HUNT.task; const pr = PRANKS.find((r) => r.act === a.id); if (pr && S.pranks[pr.id] === 1) { spring(S, pr); n.t = HUNT.task; } } }
+      if (g && g.kind === 'hide') { n.mode = 'check'; n.t = HUNT.check; n.chk = g.id; const h = hideById[g.id]; n.face = h.x > n.x ? 1 : -1; } } }
+  // whoever he sees within arm's reach is caught; while he works at a chore he still catches what comes right up to him
+  for (const p of S.players) if (!p.out && !p.hide && !p.st && !n.st && p.fl === n.fl && Math.abs(pos(p).x - pos(n).x) < CATCH && sees(S, p)) { catchP(S, p); n.mode = 'gloat'; n.t = 1.0; break; }
+}
+export function seenBy(S, p) { return sees(S, p); }
 
 export function step(S, dt) {
   if (S.ph !== 'play') return; S.t += dt; S.left -= dt;
   for (const p of S.players) stepPlayer(S, p, dt);
-  stepN(S, dt);
+  if (S.hunter) stepHunter(S, dt); else stepN(S, dt);
   if (S.left <= 0) { S.left = 0; end(S); }
+  S.rage = Math.max(0, S.rage - dt*0.004);
 }
 
 // what goes over the wire, many times a second: short names, rounded numbers
@@ -193,8 +238,11 @@ const r1 = (v) => Math.round(v*10)/10;
 export function snap(S) {
   const body = (e) => { const q = pos(e); return [r1(q.x), r1(q.y), e.fl, e.face]; };
   const n = S.n;
-  return { t: r1(S.t), left: r1(S.left), ph: S.ph, sc: S.score, cb: S.combo, it: S.items, pr: S.pranks, k: S.seq,
-    n: body(n).concat([n.mode, n.ai, n.mode === 'act' ? r1(n.t) : 0, n.say, r1(n.sayT), n.mood, n.blue, r1(n.wet), r1(n.chair), n.fx, r1(n.fxT), n.st ? 1 : 0, n.tgt]),
-    ps: S.players.map((p) => body(p).concat([p.id, p.name, p.c, p.item || '', p.hide || '', r1(p.out), p.act ? p.act.kind : '', p.act ? r1(p.act.t) : 0, p.st ? 1 : 0, p.caught])),
+  return { t: r1(S.t), left: r1(S.left), ph: S.ph, sc: S.score, cb: S.combo, it: S.items, pr: S.pranks, k: S.seq, hu: S.hunter, td: Object.keys(S.tdone), fi: S.fired, ns: S.nscore, rg: Math.round(S.rage*100)/100, win: S.win, bell: Math.max(0, Math.ceil(HUNT.bell - (S.t - S.bellAt))),
+    n: body(n).concat([n.mode, n.ai, n.mode === 'act' ? r1(n.t) : 0, n.say, r1(n.sayT), n.mood, n.blue, r1(n.wet), r1(n.chair), n.fx, r1(n.fxT), n.st ? 1 : 0, n.tgt, n.goal ? n.goal.kind + ':' + n.goal.id : '', n.mode === 'check' ? n.chk : '']),
+    ps: S.players.map((p) => body(p).concat([p.id, p.name, p.c, p.item || '', p.hide || '', r1(p.out), p.act ? p.act.kind : '', p.act ? r1(p.act.t) : 0, p.st ? 1 : 0, p.caught, p.run ? 1 : 0, Math.max(0, Math.ceil(HUNT.noise - (S.t - p.shoutAt))), sees(S, p) ? 1 : 0])),
     ev: S.ev };
 }
+
+// what the player who is the neighbour is shown: only the pranksters he can see, and those on the street
+export function snapFor(S, viewer) { const v = snap(S); if (!S.hunter || viewer !== S.hunter) return v; v.ps = v.ps.filter((q) => q[16] || q[9] > 0); return v; }
