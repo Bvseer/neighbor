@@ -1,0 +1,7 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><script type="importmap">{ "imports": { "three": "../lib/three.module.js", "three/addons/": "../lib/addons/" } }</script></head><body>
+<script type="module">
+// draws every surface of the house once and hands the pictures out as webp, with the list of which is which
+import * as THREE from 'three'; import * as T from '../tex.js'; import { build } from '../house.js';
+const rec = T.record(); build(new THREE.Scene());
+window.__manifest = { list: rec.list }; window.__pics = rec.canvases.map((c) => c.toDataURL('image/webp', 0.82)); document.title = 'ok';
+</script></body></html>

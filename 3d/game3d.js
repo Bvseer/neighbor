@@ -7,6 +7,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import * as SU from 'three/addons/utils/SkeletonUtils.js';
 import * as G from './sim.js';
 import { build, X, F, ZW, ZP, ZS } from './house.js';
+import * as T from './tex.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v, rnd = (a, b) => a + Math.random()*(b - a), lerp = (a, b, t) => a + (b - a)*t;
@@ -16,19 +17,34 @@ const setLoad = (u) => { $('lbar').style.width = Math.round(u*100) + '%'; };
 // ---- renderer, scene, light ------------------------------------------------
 const cv = $('cv'), DPR = Math.min(2, devicePixelRatio || 1);
 const R = new THREE.WebGLRenderer({ canvas: cv, antialias: DPR < 1.5, powerPreference: 'high-performance' });
-R.setPixelRatio(DPR); R.shadowMap.enabled = true; R.shadowMap.type = THREE.PCFSoftShadowMap; R.toneMapping = THREE.ACESFilmicToneMapping; R.toneMappingExposure = 0.9; R.outputColorSpace = THREE.SRGBColorSpace;
+// three levels of quality; a phone starts in the middle, and the game steps down by itself if frames come slow
+const MOBILE = matchMedia('(pointer: coarse)').matches, QL = [{ dpr: 1, sh: 1024, soft: false }, { dpr: Math.min(1.5, DPR), sh: 1024, soft: true }, { dpr: DPR, sh: 2048, soft: true }];
+let Q = MOBILE ? 1 : 2; const PERF = { n: 0, t: 0, slow: 0, fast: 0 };
+R.setPixelRatio(QL[Q].dpr); R.shadowMap.enabled = true; R.shadowMap.type = QL[Q].soft ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap; R.toneMapping = THREE.ACESFilmicToneMapping; R.toneMappingExposure = 1.0; R.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 { const c = document.createElement('canvas'); c.width = 4; c.height = 256; const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 0, 256); g.addColorStop(0, '#4f8fd8'); g.addColorStop(0.55, '#a9d0f0'); g.addColorStop(1, '#f2e6d2'); x.fillStyle = g; x.fillRect(0, 0, 4, 256); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; scene.background = t; }
 scene.fog = new THREE.Fog('#cfe0ec', 24, 60);
-const pmrem = new THREE.PMREMGenerator(R); scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.45;
-const hemi = new THREE.HemisphereLight('#dfe9ff', '#7a6448', 0.45); scene.add(hemi);
-const sun = new THREE.DirectionalLight('#ffe2bc', 3.6); sun.position.set(-6.5, 5.6, 9.5); sun.target.position.set(0, 2, -1.6); scene.add(sun, sun.target);
-sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); const sc = sun.shadow.camera; sc.left = -11; sc.right = 11; sc.top = 8; sc.bottom = -4; sc.near = 1; sc.far = 40; sc.updateProjectionMatrix(); sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.025; sun.shadow.radius = 3;
+const pmrem = new THREE.PMREMGenerator(R); scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.24;
+const hemi = new THREE.HemisphereLight('#cfe0ff', '#8a6a4a', 0.36); scene.add(hemi);
+const sun = new THREE.DirectionalLight('#ffdcb0', 5.2); sun.position.set(-6.5, 5.6, 9.5); sun.target.position.set(0, 2, -1.6); scene.add(sun, sun.target);
+sun.castShadow = true; sun.shadow.mapSize.set(QL[Q].sh, QL[Q].sh); const sc = sun.shadow.camera; sc.left = -11; sc.right = 11; sc.top = 8; sc.bottom = -4; sc.near = 1; sc.far = 40; sc.updateProjectionMatrix(); sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.025; sun.shadow.radius = 3;
 const camera = new THREE.PerspectiveCamera(28, 1, 0.3, 120);
 
+// light thrown back by the floors and the walls: from below and from the other side, warm, no shadows
+const bounce = new THREE.DirectionalLight('#ffd7a8', 0.4); bounce.position.set(5, -2, 6); scene.add(bounce);
 setLoad(0.1);
-const H = build(scene); setLoad(0.5);
+// the surfaces come as ready pictures when they have been baked; otherwise they are drawn here
+try { const r = await fetch('./textures/manifest.json'); if (r.ok) T.play(await r.json(), './textures/'); } catch (e) {}
+const T0 = performance.now(); const H = build(scene); window.__buildMs = performance.now() - T0; setLoad(0.5);
+// the house never moves: its matrices are worked out once
+H.group.traverse((o) => { o.updateMatrix(); o.matrixAutoUpdate = false; }); H.group.updateMatrixWorld(true);
 const M = H.M;
+// the lamps glow without lighting anything: a bright bulb and a soft halo
+const halo = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,230,180,.9)'); g.addColorStop(0.35, 'rgba(255,200,130,.25)'); g.addColorStop(1, 'rgba(255,200,130,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
+for (const l of H.lights) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: halo, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.75 })); sp.position.set(l.x, l.y, l.z + 0.05); sp.scale.setScalar(0.9); scene.add(sp); }
+// a soft dark patch under each person so they stand on the floor even where the sun does not reach
+const blobTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(0,0,0,.55)'); g.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
+function blob() { const m = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.55), new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false })); m.rotation.x = -Math.PI/2; m.renderOrder = 1; scene.add(m); return m; }
 
 // ---- things in the house that change: his chair, the sofa, the television, the pot's lid ---------------------
 const sofa = new THREE.Group(); { const add = (g, m, x, y, z) => { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); o.castShadow = o.receiveShadow = true; sofa.add(o); };
@@ -94,7 +110,7 @@ function person(kind) {
   o.scale.setScalar(kind === 'boss' ? 0.0098 : 0.0092); scene.add(o);
   const mixer = new THREE.AnimationMixer(o), act = {}; for (const c of B.animations) act[c.name] = mixer.clipAction(c);
   const P = { o, mixer, act, cur: '', z: ZP, rot: 0, kind, bones: { hips: o.getObjectByName('mixamorigHips'), lu: o.getObjectByName('mixamorigLeftUpLeg'), ru: o.getObjectByName('mixamorigRightUpLeg'), ll: o.getObjectByName('mixamorigLeftLeg'), rl: o.getObjectByName('mixamorigRightLeg'), hand: o.getObjectByName('mixamorigRightHand') } };
-  play(P, 'idle'); return P;
+  P.blob = blob(); play(P, 'idle'); return P;
 }
 function play(P, name, fade) { if (!P.act[name]) { for (const f of FALLBACK[name] || []) if (P.act[f]) { name = f; break; } } if (P.cur === name || !P.act[name]) return; const a = P.act[name], b = P.act[P.cur]; if (ONCE[name]) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; } a.reset().setEffectiveWeight(1).play(); if (b) b.crossFadeTo(a, fade || 0.25, false); P.cur = name; }
 // a sitting pose laid over whatever is playing: thighs forward, shins down, hips lower
@@ -107,6 +123,13 @@ function resize() {
   const CW = rot ? h : w, CH = rot ? w : h; R.setSize(CW, CH, false); cv.style.width = CW + 'px'; cv.style.height = CH + 'px'; camera.aspect = CW/CH; CAM.near = CH < 520 || CW < 760; camera.updateProjectionMatrix(); CAM.w = CW; CAM.h = CH;
 }
 addEventListener('resize', resize); resize();
+function setQuality(q) {
+  Q = q; const L = QL[q]; R.setPixelRatio(L.dpr); resize(); if (sun.shadow.mapSize.x !== L.sh) { sun.shadow.mapSize.set(L.sh, L.sh); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
+  const t = L.soft ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap; if (R.shadowMap.type !== t) { R.shadowMap.type = t; scene.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => { m.needsUpdate = true; }); }); }
+}
+// every two seconds: if frames took longer than about 1/45 s, one step down; if they came quickly for long, one step back up
+function watchSpeed(dt) { PERF.n++; PERF.t += dt; if (PERF.t < 2) return; const avg = PERF.t/PERF.n; PERF.n = 0; PERF.t = 0;
+  if (avg > 1/45) { PERF.fast = 0; if (Q > 0 && ++PERF.slow >= 1) { PERF.slow = 0; setQuality(Q - 1); } } else if (avg < 1/57) { PERF.slow = 0; if (Q < QL.length - 1 && ++PERF.fast >= 8) { PERF.fast = 0; setQuality(Q + 1); } } else { PERF.slow = 0; PERF.fast = 0; } }
 function placeCamera(dt, fx) {
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov/2)), a = camera.aspect;
   // the whole house and its yards, or on a small screen the two floors and a part of the width, following you
@@ -189,6 +212,7 @@ function frameDraw(S, dt, now) {
     if (mode === 'act' && act.id === 'sleep' && P.act.sleep) { P.o.position.set(X(SLEEP.x), F[1] + SLEEP.y, SLEEP.z); P.o.rotation.set(0, SLEEP.ry, 0); }
     if (lie && !(P.act.sleep && mode === 'act') && !(P.act.fall && mode === 'react')) { P.o.rotation.set(0, 0, act.id === 'sleep' && mode === 'act' ? Math.PI/2 : -Math.PI/2); P.o.position.set(act.id === 'sleep' && mode === 'act' ? X(800) : x, y + (act.id === 'sleep' && mode === 'act' ? 0.72 : 0.22), act.id === 'sleep' && mode === 'act' ? -2.15 : P.z); }
     if (mode === 'react' && ['alarm', 'pins', 'pepper'].includes(fx)) P.o.position.y += Math.abs(Math.sin(N[14]*9))*0.35;
+    P.blob.position.set(P.o.position.x, Math.max(y, P.o.position.y) + 0.012, P.o.position.z); P.blob.visible = !lie; P.blob.scale.setScalar(sitting ? 1.2 : 1);
     // skin goes blue for good after the dye
     const tint = N[10] ? '#7aa0ff' : fx === 'pepper' && mode === 'react' ? '#ff8a70' : fx === 'mustard' && mode === 'react' ? '#d8e070' : '#ffffff'; if (P.tint !== tint) { P.tint = tint; P.o.traverse((m) => { if (m.isMesh && m.material.userData.skin) m.material.color.set(tint); }); }
     // his own chair rides along once the glue has done its work
@@ -213,18 +237,22 @@ function frameDraw(S, dt, now) {
   // the players
   for (const p of S.ps) { const [px, py, , f, id, name, c, item, hide, out, ak, at] = p; let Q = PEOPLE.get(id); if (!Q) { Q = person('aj'); PEOPLE.set(id, Q); }
     const x = X(px), y = (540 - py)/100, l = Q.last || { x, y }, moving = Math.abs(l.x - x) + Math.abs(l.y - y) > 0.0005; Q.last = { x, y };
-    Q.o.visible = !hide; if (hide) { const h = G.HIDES.find((q) => q.id === hide); if (id === ME) tag('hide' + id, 'bub', '👀 ' + h.name.toLowerCase(), X(h.x), F[h.fl] + 1.4, ZP); continue; }
+    Q.o.visible = !hide; if (Q.blob) Q.blob.visible = !hide; if (hide) { const h = G.HIDES.find((q) => q.id === hide); if (id === ME) tag('hide' + id, 'bub', '👀 ' + h.name.toLowerCase(), X(h.x), F[h.fl] + 1.4, ZP); continue; }
     const az = ak === 'item' || ak === 'prank' ? -2.0 : worldZ(Q, y); Q.z = lerp(Q.z, az, Math.min(1, dt*5)); const ry = ak ? Math.PI*0.9*(f > 0 ? 1 : -1) : f > 0 ? Math.PI/2 - 0.3 : -Math.PI/2 + 0.3; Q.rot = lerp(Q.rot, ry, Math.min(1, dt*10)); Q.o.rotation.set(0, Q.rot, 0); Q.o.position.set(x, y, Q.z);
     // after a prank of ours goes off, a little dance where he can't see
     const party = S.t - (LASTPRANK || -99) < 3 && !moving && !ak;
     const chased = (N[4] === 'chase' || N[4] === 'alert') && N[16] === id;
-    play(Q, out > 0 ? 'sad' : ak === 'prank' ? 'pick' : ak === 'item' ? 'pick' : moving ? (chased ? 'run' : Math.abs(l.y - y) > 0.0005 ? 'walk' : 'sneak') : party ? 'dance' : 'idle', 0.2); Q.mixer.update(dt);
+    // near him he creeps, the motion sped up to the pace the game moves him at; elsewhere he runs, as the pace really is a jog
+    const nearN = N[2] === p[2] && Math.abs(N[0] - px) < 520 && !chased, stairs = Math.abs(l.y - y) > 0.0005, loco = chased || !nearN ? 'run' : stairs ? 'walk' : 'sneak';
+    play(Q, out > 0 ? 'sad' : ak === 'prank' ? 'pick' : ak === 'item' ? 'pick' : moving ? loco : party ? 'dance' : 'idle', 0.2);
+    Q.mixer.timeScale = moving ? (loco === 'sneak' ? 1.9 : loco === 'run' ? 0.78 : 1.3) : 1; Q.mixer.update(dt);
+    Q.blob.position.set(x, y + 0.012, Q.z); Q.blob.visible = true;
     if (item) { const it = Q.carry && Q.carry.k === item ? Q.carry : (() => { if (Q.carry) Q.carry.o.removeFromParent(); const o = itemMesh(item); o.scale.setScalar(1.6); scene.add(o); return Q.carry = { k: item, o }; })(); Q.bones.hand.getWorldPosition(it.o.position); it.o.position.y += 0.03; it.o.rotation.y = now; }
     else if (Q.carry) { Q.carry.o.removeFromParent(); Q.carry = null; }
     if (ak) { const u = clamp(at/G.ACT_T[ak], 0, 1); tag('act' + id, 'ring', '', x, y + 2.0, Q.z); TAG['act' + id].style.background = 'conic-gradient(#ffcf3a ' + (u*360) + 'deg, rgba(0,0,0,.4) 0)'; }
     if (out > 0) tag('out' + id, 'bub', '😵 выгнали', x, y + 2.0, Q.z);
     if (S.ps.length > 1) { tag('nm' + id, 'name', name, x, y - 0.05, Q.z); TAG['nm' + id].style.color = G.COLORS[c]; } }
-  for (const [id, Q] of PEOPLE) if (id !== 'n' && !S.ps.some((p) => p[4] === id)) { Q.o.removeFromParent(); if (Q.carry) Q.carry.o.removeFromParent(); PEOPLE.delete(id); }
+  for (const [id, Q] of PEOPLE) if (id !== 'n' && !S.ps.some((p) => p[4] === id)) { Q.o.removeFromParent(); Q.blob.removeFromParent(); if (Q.carry) Q.carry.o.removeFromParent(); PEOPLE.delete(id); }
   // things on their spots, armed pranks, where my thing is wanted
   for (const k in ITEMS) { const on = S.it[k] === 'spot'; ITEMS[k].o.visible = on; ITEMS[k].gl.visible = on; if (on) { ITEMS[k].gl.material.opacity = 0.55 + Math.sin(now*3 + G.ITEMS[k].x)*0.3; ITEMS[k].o.rotation.y = Math.sin(now*1.5 + G.ITEMS[k].x)*0.4; } }
   for (const r of G.PRANKS) ARMED[r.id].visible = S.pr[r.id] === 1;
@@ -263,11 +291,12 @@ function showOver(e) { const n = e.done; $('ores').textContent = n === 9 ? 'Со
 $('goSolo').onclick = () => { audioOn(); startSolo(); }; $('again').onclick = () => startSolo(); $('toHome').onclick = () => { GAME = null; show('home'); };
 $('goHelp').onclick = () => show('help'); $('helpOk').onclick = () => show(GAME ? null : 'home'); $('goNet').onclick = () => toast('Игра с друзьями появится совсем скоро', 2200);
 
-const IDLE = G.newGame(); let lastT = 0, acc = 0;
+const IDLE = G.newGame(); let lastT = 0, acc = 0, SHF = 0;
 function loop(ts) {
   const dt = Math.min(0.05, (ts - lastT)/1000 || 0); lastT = ts; const now = ts/1000;
   const S = GAME || IDLE; acc += dt; let n = 0; while (acc >= 1/60 && n++ < 6) { G.step(S, 1/60); acc -= 1/60; } if (S === IDLE && S.ph !== 'play') Object.assign(IDLE, G.newGame());
-  VIEW = G.snap(S); frameDraw(VIEW, dt, now); if (GAME) { hud(VIEW); events(VIEW); }
+  SHF = (SHF + 1) % 2; sun.shadow.autoUpdate = false; sun.shadow.needsUpdate = Q === 2 || SHF === 0;
+  VIEW = G.snap(S); frameDraw(VIEW, dt, now); if (GAME) { hud(VIEW); events(VIEW); } if (dt > 0) watchSpeed(dt);
   requestAnimationFrame(loop);
 }
 
@@ -277,4 +306,4 @@ function loop(ts) {
   const [b, a] = await Promise.all([loader.loadAsync('./models/boss.json', prog(0)), loader.loadAsync('./models/aj.json', prog(1))]); BODY.boss = b; BODY.aj = a;
   setLoad(1); placeCamera(0, 0); $('load').style.display = 'none'; requestAnimationFrame(loop);
 })().catch((e) => { $('load').innerHTML = '<div>Не удалось загрузить: ' + e.message + '</div>'; });
-window.__G = G; window.__SLEEP = SLEEP; window.__S = () => GAME; window.__start = startSolo; window.__view = () => VIEW; window.__R = R; window.__scene = scene; window.__cam = camera;
+window.__G = G; window.__Q = () => Q; window.__setQ = setQuality; window.__SLEEP = SLEEP; window.__S = () => GAME; window.__start = startSolo; window.__view = () => VIEW; window.__R = R; window.__scene = scene; window.__cam = camera;

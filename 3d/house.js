@@ -13,7 +13,7 @@ const CEIL = 2.22;
 
 export function build(scene) {
   const M = {
-    oak: T.floorWood('#a87a4c'), oakDark: T.floorWood('#7a5232'), plaster: T.plaster('#efe9df'), white: T.plaster('#f6f4f0'),
+    oak: T.floorWood('#a87a4c'), oakDark: T.floorWood('#7a5232', 512), plaster: T.plaster('#efe9df'), white: T.plaster('#f6f4f0'),
     brick: T.brick(), roof: T.roofTiles(), grass: T.grass(), paving: T.paving(), soil: T.soil(),
     hall: T.wallpaper('stripe', '#e2d2b4', '#d6c29c'), kitchen: T.plaster('#efe2b8'), kTile: T.tiles('#f4f6f8', 16, '#b8bcc0', true), kTileBlue: T.tiles('#5d8fc8', 8, '#e8eef2', true),
     living: T.wallpaper('damask', '#9dbb98', '#8aab86'), bath: T.tiles('#bfe4e6', 14, '#f0f4f4', true), bed: T.wallpaper('floral', '#d4c4e2', '#b49ad0'), study: T.wallpaper('pinstripe', '#2e5a5e', '#5a7a6a'),
@@ -100,7 +100,8 @@ export function build(scene) {
   // ---- lamps: shade and bulb, and the light itself
   const lights = [];
   function lamp(x, fl, drop, warm) { const y = F[fl] + CEIL; cyl(M.blackMatte, xs(x), y - drop, -1.6, 0.006, 0.006, drop, { cast: false }); const sh = new THREE.CylinderGeometry(0.1, 0.24, 0.2, 24, 1, true); put(sh, M.shade, xs(x), y - drop - 0.08, -1.6, 0, 0, 0, false); const bl = new THREE.SphereGeometry(0.05, 12, 8); put(bl, M.bulb, xs(x), y - drop - 0.12, -1.6, 0, 0, 0, false);
-    const L = new THREE.PointLight(warm || '#ffcf8a', 9, 7, 1.5); L.position.set(xs(x), y - drop - 0.25, -1.3); group.add(L); lights.push(L); }
+    // no light of its own: seven lamps would make every pixel of the house count seven lights. A soft glow is enough by day
+    lights.push({ x: xs(x), y: y - drop - 0.12, z: -1.6, col: warm || '#ffcf8a' }); }
   lamp(380, 0, 0.45); lamp(690, 0, 0.5); lamp(1080, 0, 0.55); lamp(470, 1, 0.3, '#f4f6ff'); lamp(760, 1, 0.4); lamp(1020, 1, 0.35);
 
   // ---- hall: cabinet, coat stand with coats, rug, mirror
